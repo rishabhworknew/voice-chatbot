@@ -4,7 +4,7 @@ import json
 import requests
 from dotenv import load_dotenv
 import os
-from datetime import datetime
+from datetime import datetime, UTC, timedelta
 import pytz
 from tenacity import retry, stop_after_attempt, wait_fixed
 from google import genai
@@ -29,34 +29,56 @@ if not API_KEY:
 client = genai.Client(api_key=API_KEY)
 model_id = "gemini-2.0-flash-live-001"
 
+def get_dubai_time():
+    utc_time = datetime.now(UTC)
+    dubai_time = utc_time + timedelta(hours=4) 
+    formatted_time = dubai_time.strftime("%d-%m-%Y %I:%M %p")
+    logger.info(f"Current Dubai time : {formatted_time}")
+    return formatted_time
+
+def get_dubai_date():
+    utc_time = datetime.now(UTC)
+    dubai_time = utc_time + timedelta(hours=4) 
+    formatted_time = dubai_time.strftime("%d-%m-%Y")
+    return formatted_time
+current_dubai_time = get_dubai_time()
+current_dubai_date = get_dubai_date()
 # System prompt for ride-booking assistant
 SYSTEM_PROMPT = """
-You are a ride-booking assistant in the UAE (UTC+4). Your job is to guide users conversationally to book a ride. For each user input, respond with a JSON object in the format:
-{
-  "response": "string",
-  "state": {
-    "startLocation": null or string,
-    "endLocation": null or string,
-    "startDate": null or string,
-    "startTime": null or string,
-    "selectedSlot": null or string,
-    "rideConfirmation": boolean,
-    "rideRejection": boolean
-  }
-}
-- If the user provides a location, date, or time, update the corresponding state field.
-- If the user asks for a unrelated question, gently repond to their question with a relevant guidance.
-- If the user confirms or rejects the ride, set rideConfirmation or rideRejection accordingly.
-- Keep responses concise and conversational.
+You are a ride-booking assistant in the UAE. Current date and time: {current_dubai_time}. Assume today’s date unless the user specifies otherwise.
+
+Conversational Task:
+- Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), time.
+- Respond concisely, friendly, and interactively. If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
+
+
+State Extraction:
+Extract and update these fields based on the user’s message and history:
+- "startLocation": string (e.g., "Dubai Airport")
+- "endLocation": string (e.g., "Dubai Mall")
+- "startDate": string (DD-MM-YYYY, default today)
+- "startTime": string (H:MM AM/PM, e.g., "2:00 PM")
+- "selectedSlot": string (e.g., "02:00 PM") if user selects a slot
+- "rideConfirmation": boolean (true if user says "yes" after fare)
+- "rideRejection": boolean (true if user says "no" after fare)
+Update fields with new information, keeping prior values unless contradicted.
+
+Output:
+Return a JSON object:
+{{
+  "response": "Conversational response",
+  "state": {{ "startLocation": null, "endLocation": null, "startDate": null, "startTime": null, "selectedSlot": null, "rideConfirmation": false, "rideRejection": false }}
+}}
 """
+
 
 def validate_state(state):
     """Validate state fields"""
     try:
         if state["startDate"]:
-            datetime.strptime(state["startDate"], "%Y-%m-%d")
+            datetime.strptime(state["startDate"], "%d-%m-%Y")
         if state["startTime"]:
-            datetime.strptime(state["startTime"], "%H:%M")
+            datetime.strptime(state["startTime"], "%I:%M %p")
         return state
     except ValueError as e:
         logger.error(f"Invalid state format: {str(e)}")
