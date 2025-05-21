@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook-test/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
@@ -45,7 +45,7 @@ You are a ride-booking assistant in the UAE (UTC+4). Your job is to guide users 
   }
 }
 - If the user provides a location, date, or time, update the corresponding state field.
-- If the user asks for a discount or unrelated question, respond with "Sorry, we can't offer discounts. [Repeat previous prompt or provide relevant guidance]."
+- If the user asks for a unrelated question, gently repond to their question with a relevant guidance.
 - If the user confirms or rejects the ride, set rideConfirmation or rideRejection accordingly.
 - Keep responses concise and conversational.
 """
@@ -238,14 +238,12 @@ async def handle_websocket(websocket):
 
                         # Prepare n8n payload
                         n8n_payload = {
-                            "body": {
                                 "message": user_input,
                                 "session_id": data.get("session_id", session_id),
                                 "response": response,
                                 "state": state,
-                                "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S")
-                            },
-                            "headers": {"authorization": data.get("authorization", "")}
+                                "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S"),
+                                "headers": {"authorization": data.get("authorization", "")}
                         }
 
                         # Send to n8n
