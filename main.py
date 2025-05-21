@@ -11,6 +11,7 @@ from google import genai
 from google.genai import types
 import uuid
 import logging
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -139,21 +140,41 @@ async def handle_websocket(websocket):
                                 )
 
                                 # Process Gemini response
-                                response_text = []
+                                response_text_parts = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
-                                        response_text.append(gemini_message.text)
+                                        response_text_parts.append(gemini_message.text)
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
+                                
+                                raw_gemini_response_str = "".join(response_text_parts)
+                                logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
 
-                                # Parse response
+                                # Extract JSON from markdown fences
+                                json_to_parse = raw_gemini_response_str
+                                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
+                                if match:
+                                    json_to_parse = match.group(1)
+                                
+                                # Parse Gemini's JSON response
                                 try:
-                                    gemini_output = json.loads("".join(response_text))
-                                    response = gemini_output.get("response", "Sorry, something went wrong.")
-                                    state = validate_state(gemini_output.get("state", state))
-                                except json.JSONDecodeError:
-                                    response = "Sorry, something went wrong. Please try again."
-                                    state = state
+                                    gemini_output = json.loads(json_to_parse.strip()) # Use the cleaned string
+                                    response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
+                                    state_update = gemini_output.get("state")
+                                    if state_update is not None:
+                                        state = validate_state(state_update)
+                                    else:
+                                        # Keep current state if "state" key is missing in Gemini's output
+                                        pass # Or handle as an error if state is always expected
+                                    logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
+                                    response = "Sorry, something went wrong processing the response. Please try again."
+                                    # state remains unchanged from its previous value
+                                except ValueError as e: # Catch validation errors
+                                    logger.error(f"State validation error: {e}. Offending state: {state_update}")
+                                    response = f"Sorry, there was an issue with the data format: {e}"
+                                    # state remains unchanged or you might want to revert
                             except Exception as e:
                                 await websocket.send(json.dumps({
                                     "error": f"Audio processing error: {str(e)}",
@@ -172,23 +193,42 @@ async def handle_websocket(websocket):
                                     turn_complete=True
                                 )
 
-                                # Process Gemini response
-                                response_text = []
+                                # Process Gemini response# Process Gemini response
+                                response_text_parts = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
-                                        response_text.append(gemini_message.text)
+                                        response_text_parts.append(gemini_message.text)
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
+                                
+                                raw_gemini_response_str = "".join(response_text_parts)
+                                logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
 
+                                # Extract JSON from markdown fences
+                                json_to_parse = raw_gemini_response_str
+                                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
+                                if match:
+                                    json_to_parse = match.group(1)
+                                
                                 # Parse Gemini's JSON response
                                 try:
-                                    gemini_output = json.loads("".join(response_text))
-                                    response = gemini_output.get("response", "Sorry, something went wrong.")
-                                    state = validate_state(gemini_output.get("state", state))
-                                    logger.info(f"Gemini response: {''.join(response_text)}")
-                                except json.JSONDecodeError:
-                                    response = "Sorry, something went wrong. Please try again."
-                                    state = state
+                                    gemini_output = json.loads(json_to_parse.strip()) # Use the cleaned string
+                                    response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
+                                    state_update = gemini_output.get("state")
+                                    if state_update is not None:
+                                        state = validate_state(state_update)
+                                    else:
+                                        # Keep current state if "state" key is missing in Gemini's output
+                                        pass # Or handle as an error if state is always expected
+                                    logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
+                                    response = "Sorry, something went wrong processing the response. Please try again."
+                                    # state remains unchanged from its previous value
+                                except ValueError as e: # Catch validation errors
+                                    logger.error(f"State validation error: {e}. Offending state: {state_update}")
+                                    response = f"Sorry, there was an issue with the data format: {e}"
+                                    # state remains unchanged or you might want to revert
                             except Exception as e:
                                 await websocket.send(json.dumps({
                                     "error": f"Gemini API error: {str(e)}",
