@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook-test/chatbot")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
@@ -32,8 +32,7 @@ model_id = "gemini-2.0-flash-live-001"
 def get_dubai_time():
     utc_time = datetime.now(UTC)
     dubai_time = utc_time + timedelta(hours=4) 
-    formatted_time = dubai_time.strftime("%d-%m-%Y %I:%M %p")
-    logger.info(f"Current Dubai time : {formatted_time}")
+    formatted_time = dubai_time.strftime("%I:%M %p")
     return formatted_time
 
 def get_dubai_date():
@@ -44,13 +43,15 @@ def get_dubai_date():
 current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
 # System prompt for ride-booking assistant
+logger.info(f"Current Dubai time : {current_dubai_time}")
+logger.info(f"Current Dubai date : {current_dubai_date}")
 SYSTEM_PROMPT = """
-You are a ride-booking assistant in the UAE. Current date and time: {current_dubai_time}. Assume today’s date unless the user specifies otherwise.
+You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. Assume today’s date unless the user specifies otherwise.
 
 Conversational Task:
 - Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), time.
 - Respond concisely, friendly, and interactively. If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
-
+- If the user wants to search for nearby locations, respond with the list of locations.
 
 State Extraction:
 Extract and update these fields based on the user’s message and history:
