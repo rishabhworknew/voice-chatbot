@@ -43,10 +43,11 @@ def get_dubai_date():
 current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
 # System prompt for ride-booking assistant
-logger.info(f"Current Dubai time : {current_dubai_time}")
-logger.info(f"Current Dubai date : {current_dubai_date}")
-SYSTEM_PROMPT = """
-You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. Assume today’s date unless the user specifies otherwise.
+#logger.info(f"Current Dubai time : {current_dubai_time}")
+#logger.info(f"Current Dubai date : {current_dubai_date}")
+SYSTEM_PROMPT = f"""
+You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
+Assume today’s date unless the user specifies otherwise.
 
 Conversational Task:
 - Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), time.
@@ -71,7 +72,7 @@ Return a JSON object:
   "state": {{ "startLocation": null, "endLocation": null, "startDate": null, "startTime": null, "selectedSlot": null, "rideConfirmation": false, "rideRejection": false }}
 }}
 """
-
+# logger.info(f"System prompt: {SYSTEM_PROMPT}")
 
 def validate_state(state):
     """Validate state fields"""
@@ -270,14 +271,17 @@ async def handle_websocket(websocket):
                         }
 
                         # Send to n8n
-                        n8n_response = await call_n8n_webhook(n8n_payload)
-                        logger.info(f"n8n response: {n8n_response}")
+                        n8n_processed_data = await call_n8n_webhook(n8n_payload) # This is the JSON dict from n8n
+                        logger.info(f"Received from n8n: {n8n_processed_data}")
 
                         # Send response to frontend
+                        final_user_response = n8n_processed_data.get("response", "Sorry, there was an issue processing your request with our backend services.")
+                        final_state = n8n_processed_data.get("state", state) # Fallback to previous state if n8n doesn't send one
+
                         frontend_response = {
-                            "response": response,
+                            "response": final_user_response, # Use response from n8n
                             "session_id": session_id,
-                            "state": state
+                            "state": final_state             # Use state from n8n (or updated by it)
                         }
                         await websocket.send(json.dumps(frontend_response))
 
