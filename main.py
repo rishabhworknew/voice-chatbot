@@ -30,21 +30,18 @@ client = genai.Client(api_key=API_KEY)
 model_id = "gemini-2.0-flash-live-001"
 
 def get_dubai_time():
-    utc_time = datetime.now(UTC)
-    dubai_time = utc_time + timedelta(hours=4) 
-    formatted_time = dubai_time.strftime("%I:%M %p")
-    return formatted_time
+    dubai_tz = pytz.timezone("Asia/Dubai")
+    dubai_time = datetime.now(dubai_tz)
+    return dubai_time.strftime("%I:%M %p")
 
 def get_dubai_date():
-    utc_time = datetime.now(UTC)
-    dubai_time = utc_time + timedelta(hours=4) 
-    formatted_time = dubai_time.strftime("%d-%m-%Y")
-    return formatted_time
+    dubai_tz = pytz.timezone("Asia/Dubai")
+    dubai_time = datetime.now(dubai_tz)
+    return dubai_time.strftime("%d-%m-%Y")
+
 current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
-# System prompt for ride-booking assistant
-#logger.info(f"Current Dubai time : {current_dubai_time}")
-#logger.info(f"Current Dubai date : {current_dubai_date}")
+logger.info(f"Current Dubai time : {current_dubai_time} , date : {current_dubai_date}")
 SYSTEM_PROMPT = f"""
 You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
 Assume today’s date unless the user specifies otherwise.
