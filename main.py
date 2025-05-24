@@ -47,7 +47,7 @@ You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai
 Assume today’s date unless the user specifies otherwise.
 
 Conversational Task:
-- Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), time.
+- Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), start time.
 - Respond concisely, friendly, and interactively. If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
 - If the user wants to search for nearby locations, respond with the list of locations.
 
@@ -106,7 +106,7 @@ async def handle_websocket(websocket):
     uae_tz = pytz.timezone("Asia/Dubai")
 
     try:
-        async with asyncio.timeout(300):  # 5-minute timeout for inactivity
+        async with asyncio.timeout(600):  # 10-minute timeout for inactivity
             # Configure Live API session with system instruction
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.TEXT],
@@ -137,7 +137,7 @@ async def handle_websocket(websocket):
                             }))
                             continue
 
-                        # Handle audio input (convert base64 to PCM if provided)
+                        # Handle audio or text input (your existing code)
                         if audio_input:
                             try:
                                 import io
@@ -179,23 +179,18 @@ async def handle_websocket(websocket):
                                 
                                 # Parse Gemini's JSON response
                                 try:
-                                    gemini_output = json.loads(json_to_parse.strip()) # Use the cleaned string
+                                    gemini_output = json.loads(json_to_parse.strip())
                                     response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
                                     state_update = gemini_output.get("state")
                                     if state_update is not None:
                                         state = validate_state(state_update)
-                                    else:
-                                        # Keep current state if "state" key is missing in Gemini's output
-                                        pass # Or handle as an error if state is always expected
                                     logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
                                 except json.JSONDecodeError as e:
                                     logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
                                     response = "Sorry, something went wrong processing the response. Please try again."
-                                    # state remains unchanged from its previous value
-                                except ValueError as e: # Catch validation errors
+                                except ValueError as e:
                                     logger.error(f"State validation error: {e}. Offending state: {state_update}")
                                     response = f"Sorry, there was an issue with the data format: {e}"
-                                    # state remains unchanged or you might want to revert
                             except Exception as e:
                                 await websocket.send(json.dumps({
                                     "error": f"Audio processing error: {str(e)}",
@@ -205,7 +200,6 @@ async def handle_websocket(websocket):
                         else:
                             # Handle text input
                             try:
-                                # Use send_client_content instead of send
                                 await session.send_client_content(
                                     turns={
                                         "role": "user",
@@ -214,7 +208,7 @@ async def handle_websocket(websocket):
                                     turn_complete=True
                                 )
 
-                                # Process Gemini response# Process Gemini response
+                                # Process Gemini response
                                 response_text_parts = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
@@ -233,23 +227,18 @@ async def handle_websocket(websocket):
                                 
                                 # Parse Gemini's JSON response
                                 try:
-                                    gemini_output = json.loads(json_to_parse.strip()) # Use the cleaned string
+                                    gemini_output = json.loads(json_to_parse.strip())
                                     response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
                                     state_update = gemini_output.get("state")
                                     if state_update is not None:
                                         state = validate_state(state_update)
-                                    else:
-                                        # Keep current state if "state" key is missing in Gemini's output
-                                        pass # Or handle as an error if state is always expected
                                     logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
                                 except json.JSONDecodeError as e:
                                     logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
                                     response = "Sorry, something went wrong processing the response. Please try again."
-                                    # state remains unchanged from its previous value
-                                except ValueError as e: # Catch validation errors
+                                except ValueError as e:
                                     logger.error(f"State validation error: {e}. Offending state: {state_update}")
                                     response = f"Sorry, there was an issue with the data format: {e}"
-                                    # state remains unchanged or you might want to revert
                             except Exception as e:
                                 await websocket.send(json.dumps({
                                     "error": f"Gemini API error: {str(e)}",
@@ -257,39 +246,48 @@ async def handle_websocket(websocket):
                                 }))
                                 return
 
-                        # Prepare n8n payload
-                        n8n_payload = {
+                        # Check if all required fields are fulfilled
+                        required_fields = ["startLocation", "endLocation", "startDate", "startTime"]
+                        all_fields_fulfilled = all(state[field] is not None and state[field].strip() != "" for field in required_fields)
+
+                        # Prepare frontend response
+                        frontend_response = {
+                            "response": response,
+                            "session_id": session_id,
+                            "state": state
+                        }
+
+                        if all_fields_fulfilled:
+                            # Prepare n8n payload
+                            n8n_payload = {
                                 "message": user_input,
                                 "session_id": data.get("session_id", session_id),
                                 "response": response,
                                 "state": state,
                                 "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S"),
                                 "headers": {"authorization": data.get("authorization", "")}
-                        }
+                            }
 
-                        # Send to n8n
-                        n8n_processed_data = await call_n8n_webhook(n8n_payload) # This is the JSON dict from n8n
-                        logger.info(f"Received from n8n: {n8n_processed_data}")
+                            # Send to n8n
+                            try:
+                                n8n_processed_data = await call_n8n_webhook(n8n_payload)
+                                logger.info(f"Received from n8n: {n8n_processed_data}")
+
+                                # Update frontend response with n8n data
+                                frontend_response["response"] = n8n_processed_data.get("response", response)
+                                frontend_response["state"] = n8n_processed_data.get("state", state)
+                            except requests.RequestException as e:
+                                logger.error(f"Webhook error: {str(e)}")
+                                frontend_response["response"] = "Sorry, there was an issue contacting our backend services."
+                        else:
+                            logger.info("Not all required fields fulfilled, skipping n8n webhook call")
 
                         # Send response to frontend
-                        final_user_response = n8n_processed_data.get("response", "Sorry, there was an issue processing your request with our backend services.")
-                        final_state = n8n_processed_data.get("state", state) # Fallback to previous state if n8n doesn't send one
-
-                        frontend_response = {
-                            "response": final_user_response, # Use response from n8n
-                            "session_id": session_id,
-                            "state": final_state             # Use state from n8n (or updated by it)
-                        }
                         await websocket.send(json.dumps(frontend_response))
 
                     except json.JSONDecodeError:
                         await websocket.send(json.dumps({
                             "error": "Invalid JSON format: Please send a valid JSON object",
-                            "session_id": session_id
-                        }))
-                    except requests.RequestException as e:
-                        await websocket.send(json.dumps({
-                            "error": f"Webhook error: {str(e)}",
                             "session_id": session_id
                         }))
                     except Exception as e:
