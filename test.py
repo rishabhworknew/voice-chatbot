@@ -42,7 +42,7 @@ response = client.models.generate_content(
     contents="Create a bar chart titled 'Quarterly Sales' with data: Q1: 50000, Q2: 75000, Q3: 60000.",
     config=config,
 )
-
+print(response)
 # Check for a function call
 if response.candidates[0].content.parts[0].function_call:
     function_call = response.candidates[0].content.parts[0].function_call
