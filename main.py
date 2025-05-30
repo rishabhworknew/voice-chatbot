@@ -43,17 +43,19 @@ current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
 logger.info(f"Current Dubai time : {current_dubai_time} , date : {current_dubai_date}")
 SYSTEM_PROMPT = f"""
-You are a ride-booking assistant in the UAE. Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
+You are a ride-booking assistant in the UAE.Accept any language from the user but respond only in English. 
+Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
 Assume today’s date unless the user specifies otherwise.
 
 Conversational Task:
 - Guide the user to book a ride by asking for one detail at a time: start location, end location, date (default today), start time.
-- Respond concisely, friendly, and interactively. If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
-- If the user queries about location suggestions, answer their question.
+- Respond concisely, friendly, and interactively. 
+- If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
+- If the user queries about location suggestions/reccomendations , answer their question.
 
 State Extraction:
 Extract and update these fields based on the user’s message and history:
-- "startLocation": string (e.g., "Dubai Airport")
+- "startLocation": string (e.g., "Dubai Airport Terminal 1")
 - "endLocation": string (e.g., "Dubai Mall")
 - "startDate": string (DD-MM-YYYY, default today)
 - "startTime": string (H:MM AM/PM, e.g., "2:00 PM")
@@ -107,12 +109,13 @@ async def handle_websocket(websocket):
 
     try:
         async with asyncio.timeout(600):  # 10-minute timeout for inactivity
-            # Configure Live API session with system instruction
+            # Configure Live API session with system instruction and input audio transcription
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.TEXT],
                 system_instruction=types.Content(
                     parts=[types.Part(text=SYSTEM_PROMPT)]
-                )
+                ),
+                input_audio_transcription={}  # Enable input audio transcription
             )
 
             async with client.aio.live.connect(model=model_id, config=config) as session:
@@ -121,6 +124,7 @@ async def handle_websocket(websocket):
                         # Parse incoming message
                         data = json.loads(message)
                         user_input = data.get("text")
+                        logger.info(f"User input: {user_input}")
                         audio_input = data.get("audio")  # Base64 audio (if provided)
 
                         if not user_input and not audio_input:
@@ -137,7 +141,10 @@ async def handle_websocket(websocket):
                             }))
                             continue
 
-                        # Handle audio or text input (your existing code)
+                        # Initialize transcription variable
+                        transcription = None
+
+                        # Handle audio or text input
                         if audio_input:
                             try:
                                 import io
@@ -160,11 +167,15 @@ async def handle_websocket(websocket):
                                     audio=types.Blob(data=pcm_buffer.read(), mime_type="audio/pcm;rate=16000")
                                 )
 
-                                # Process Gemini response
+                                # Process Gemini response and extract transcription
                                 response_text_parts = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
                                         response_text_parts.append(gemini_message.text)
+                                    # Check for input transcription
+                                    if gemini_message.server_content and gemini_message.server_content.input_transcription:
+                                        transcription = gemini_message.server_content.input_transcription.text
+                                        logger.info(f"Received transcription: {transcription}")
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
                                 
@@ -198,7 +209,7 @@ async def handle_websocket(websocket):
                                 }))
                                 continue
                         else:
-                            # Handle text input
+                            # Handle text input (unchanged)
                             try:
                                 await session.send_client_content(
                                     turns={
@@ -254,28 +265,34 @@ async def handle_websocket(websocket):
                         frontend_response = {
                             "response": response,
                             "session_id": session_id,
-                            "state": state
+                            "state": state,
+                            "transcription": transcription  # Include transcription if available
                         }
+                        logger.info(f"Frontend response: {frontend_response}")
 
                         if all_fields_fulfilled:
                             # Prepare n8n payload
                             n8n_payload = {
-                                "message": user_input,
+                                "message": user_input or transcription,  # Use transcription if audio input
                                 "session_id": data.get("session_id", session_id),
                                 "response": response,
                                 "state": state,
+                                "transcription": transcription,  # Include transcription in n8n payload
                                 "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S"),
                                 "headers": {"authorization": data.get("authorization", "")}
                             }
-
+                            logger.info(f"N8N payload: {n8n_payload}")
                             # Send to n8n
                             try:
+                                logger.info("All required fields fulfilled, sending to n8n webhook")
                                 n8n_processed_data = await call_n8n_webhook(n8n_payload)
                                 logger.info(f"Received from n8n: {n8n_processed_data}")
 
                                 # Update frontend response with n8n data
                                 frontend_response["response"] = n8n_processed_data.get("response", response)
+                                logger.info(f"Updated response: {frontend_response['response']}")
                                 frontend_response["state"] = n8n_processed_data.get("state", state)
+                                logger.info(f"Updated state: {frontend_response['state']}")
                             except requests.RequestException as e:
                                 logger.error(f"Webhook error: {str(e)}")
                                 frontend_response["response"] = "Sorry, there was an issue contacting our backend services."
