@@ -169,16 +169,20 @@ async def handle_websocket(websocket):
 
                                 # Process Gemini response and extract transcription
                                 response_text_parts = []
+                                transcription_fragments = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
                                         response_text_parts.append(gemini_message.text)
                                     # Check for input transcription
                                     if gemini_message.server_content and gemini_message.server_content.input_transcription:
-                                        transcription = gemini_message.server_content.input_transcription.text
-                                        logger.info(f"Received transcription: {transcription}")
+                                       fragment = gemini_message.server_content.input_transcription.text  # <--- Modified
+                                       transcription_fragments.append(fragment)  # <--- Added
+                                       logger.info(f"Received transcription: {fragment}")
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
-                                
+                                transcription = "".join(transcription_fragments).strip()
+                                logger.info(f"Full transcription: {transcription}")
+
                                 raw_gemini_response_str = "".join(response_text_parts)
                                 logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
 
