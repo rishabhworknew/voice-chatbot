@@ -39,10 +39,20 @@ config = types.GenerateContentConfig(tools=[tools])
 # Send request with function declarations
 response = client.models.generate_content(
     model="gemini-2.0-flash",
-    contents="Create a bar chart titled 'Quarterly Sales' with data: Q1: 50000, Q2: 75000, Q3: 60000.",
+    contents="""Create a bar chart titled 'Quarterly Sales' with data: Q1: 50000, Q2: 75000, Q3: 60000.
+    Output:
+Always return a JSON object in this format:
+{{
+    "input": "Transcription of the user's message",
+    "response": " response",
+}}
+""",
     config=config,
 )
+print("########################################")
 print(response)
+print("########################################")
+
 # Check for a function call
 if response.candidates[0].content.parts[0].function_call:
     function_call = response.candidates[0].content.parts[0].function_call

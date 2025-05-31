@@ -43,7 +43,7 @@ current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
 logger.info(f"Current Dubai time : {current_dubai_time} , date : {current_dubai_date}")
 SYSTEM_PROMPT = f"""
-You are a ride-booking assistant in the UAE.Accept any language from the user but respond only in English. 
+You are a ride-booking assistant in the UAE. Accept any language from the user but respond only in English. 
 Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
 Assume today’s date unless the user specifies otherwise.
 
@@ -65,10 +65,11 @@ Extract and update these fields based on the user’s message and history:
 Update fields with new information, keeping prior values unless contradicted.
 
 Output:
-Return a JSON object:
+Always return a JSON object in this format:
 {{
-  "response": "Conversational response",
-  "state": {{ "startLocation": null, "endLocation": null, "startDate": null, "startTime": null, "selectedSlot": null, "rideConfirmation": false, "rideRejection": false }}
+    "transcription": "Transcription of the user's message",
+    "response": "Conversational response",
+    "state": {{ "startLocation": null, "endLocation": null, "startDate": null, "startTime": null, "selectedSlot": null, "rideConfirmation": false, "rideRejection": false }}
 }}
 """
 # logger.info(f"System prompt: {SYSTEM_PROMPT}")
@@ -109,13 +110,12 @@ async def handle_websocket(websocket):
 
     try:
         async with asyncio.timeout(600):  # 10-minute timeout for inactivity
-            # Configure Live API session with system instruction and input audio transcription
+            # Configure Live API session with system instruction (remove input_audio_transcription)
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.TEXT],
                 system_instruction=types.Content(
                     parts=[types.Part(text=SYSTEM_PROMPT)]
-                ),
-                input_audio_transcription={}  # Enable input audio transcription
+                )
             )
 
             async with client.aio.live.connect(model=model_id, config=config) as session:
@@ -141,10 +141,11 @@ async def handle_websocket(websocket):
                             }))
                             continue
 
-                        # Initialize transcription variable
-                        transcription = None
+                        # Initialize variables
+                        transcription = ""
+                        response = ""
+                        state_update = None
 
-                        # Handle audio or text input
                         if audio_input:
                             try:
                                 import io
@@ -167,21 +168,13 @@ async def handle_websocket(websocket):
                                     audio=types.Blob(data=pcm_buffer.read(), mime_type="audio/pcm;rate=16000")
                                 )
 
-                                # Process Gemini response and extract transcription
+                                # Process Gemini response
                                 response_text_parts = []
-                                transcription_fragments = []
                                 async for gemini_message in session.receive():
                                     if gemini_message.text:
                                         response_text_parts.append(gemini_message.text)
-                                    # Check for input transcription
-                                    if gemini_message.server_content and gemini_message.server_content.input_transcription:
-                                       fragment = gemini_message.server_content.input_transcription.text  # <--- Modified
-                                       transcription_fragments.append(fragment)  # <--- Added
-                                       logger.info(f"Received transcription: {fragment}")
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
-                                transcription = "".join(transcription_fragments).strip()
-                                logger.info(f"Full transcription: {transcription}")
 
                                 raw_gemini_response_str = "".join(response_text_parts)
                                 logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
@@ -191,10 +184,11 @@ async def handle_websocket(websocket):
                                 match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
                                 if match:
                                     json_to_parse = match.group(1)
-                                
+
                                 # Parse Gemini's JSON response
                                 try:
                                     gemini_output = json.loads(json_to_parse.strip())
+                                    transcription = gemini_output.get("transcription", "")
                                     response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
                                     state_update = gemini_output.get("state")
                                     if state_update is not None:
@@ -213,7 +207,7 @@ async def handle_websocket(websocket):
                                 }))
                                 continue
                         else:
-                            # Handle text input (unchanged)
+                            # Handle text input
                             try:
                                 await session.send_client_content(
                                     turns={
@@ -230,7 +224,7 @@ async def handle_websocket(websocket):
                                         response_text_parts.append(gemini_message.text)
                                     if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                         break
-                                
+
                                 raw_gemini_response_str = "".join(response_text_parts)
                                 logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
 
@@ -239,10 +233,11 @@ async def handle_websocket(websocket):
                                 match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
                                 if match:
                                     json_to_parse = match.group(1)
-                                
+
                                 # Parse Gemini's JSON response
                                 try:
                                     gemini_output = json.loads(json_to_parse.strip())
+                                    transcription = gemini_output.get("transcription", user_input or "")  # Use user_input as fallback
                                     response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
                                     state_update = gemini_output.get("state")
                                     if state_update is not None:
@@ -270,18 +265,18 @@ async def handle_websocket(websocket):
                             "response": response,
                             "session_id": session_id,
                             "state": state,
-                            "transcription": transcription  # Include transcription if available
+                            "transcription": transcription
                         }
                         logger.info(f"Frontend response: {frontend_response}")
 
                         if all_fields_fulfilled:
                             # Prepare n8n payload
                             n8n_payload = {
-                                "message": user_input or transcription,  # Use transcription if audio input
+                                "message": transcription or user_input,  # Prefer transcription, fallback to user_input
                                 "session_id": data.get("session_id", session_id),
                                 "response": response,
                                 "state": state,
-                                "transcription": transcription,  # Include transcription in n8n payload
+                                "transcription": transcription,
                                 "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S"),
                                 "headers": {"authorization": data.get("authorization", "")}
                             }
