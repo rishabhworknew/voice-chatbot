@@ -126,7 +126,6 @@ async def handle_websocket(websocket):
                                 "session_id": session_id
                             }))
                             continue
-
                         # Handle audio input
                         if audio_input:
                             try:
@@ -154,29 +153,28 @@ async def handle_websocket(websocket):
                                 },
                                 turn_complete=True
                             )
+                        full_response_text = ""
 
-                        # Process Gemini response
+                        # Process Gemini response stream
                         async for gemini_message in session.receive():
+                            # 2. Append each text chunk to the accumulator
                             if gemini_message.text:
-                                await websocket.send(json.dumps({
-                                    "response": gemini_message.text,
-                                    "session_id": session_id,
-                                    "state": state
-                                }))
+                                full_response_text += gemini_message.text
 
                             if gemini_message.tool_call:
                                 function_responses = []
+                                print("########################")
                                 for fc in gemini_message.tool_call.function_calls:
                                     if fc.name == "process_ride_details":
                                         try:
-                                            params = fc.args  # Use args directly (no json.loads)
+                                            params = fc.args
                                             state.update(params)
 
                                             # Basic validation
                                             try:
-                                                if state["startDate"]:
+                                                if state.get("startDate"):
                                                     datetime.strptime(state["startDate"], "%d-%m-%Y")
-                                                if state["startTime"]:
+                                                if state.get("startTime"):
                                                     datetime.strptime(state["startTime"], "%I:%M %p")
                                             except ValueError as e:
                                                 logger.error(f"Invalid state format: {str(e)}")
@@ -211,9 +209,17 @@ async def handle_websocket(websocket):
                                                 name=fc.name,
                                                 response={"error": str(e)}
                                             ))
-
+                                
                                 # Send function responses back to Gemini
                                 await session.send_tool_response(function_responses=function_responses)
+
+                        # 3. After the loop, send the single, complete response
+                        if full_response_text:
+                            await websocket.send(json.dumps({
+                                "response": full_response_text.strip(),
+                                "session_id": session_id,
+                                "state": state
+                            }))
 
                     except json.JSONDecodeError:
                         await websocket.send(json.dumps({
