@@ -12,6 +12,10 @@ from google.genai import types
 import uuid
 import logging
 import re
+import io
+import soundfile as sf
+import librosa
+import base64
 
 # Configure logging - FINAL
 logging.basicConfig(level=logging.INFO)
@@ -147,11 +151,6 @@ async def handle_websocket(websocket):
 
                         if audio_input:
                             try:
-                                import io
-                                import soundfile as sf
-                                import librosa
-                                import base64
-
                                 # Decode base64 audio
                                 audio_bytes = base64.b64decode(audio_input)
                                 buffer = io.BytesIO(audio_bytes)

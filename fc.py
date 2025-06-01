@@ -66,9 +66,10 @@ process_ride_details = {
             "startLocation": {"type": "string", "description": "The starting location of the ride."},
             "endLocation": {"type": "string", "description": "The destination location of the ride."},
             "startDate": {"type": "string", "description": "The date of the ride in DD-MM-YYYY format."},
-            "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."}
+            "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
+            "transcription": {"type": "string", "description": "The transcription of the user's message."}
         },
-        "required": ["startLocation", "endLocation", "startDate", "startTime"]
+        "required": ["startLocation", "endLocation", "startDate", "startTime", "transcription"]
     }
 }
 
