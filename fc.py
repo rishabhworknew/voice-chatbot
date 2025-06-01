@@ -48,12 +48,15 @@ logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_dat
 
 # System prompt
 SYSTEM_PROMPT = f"""
-Current Dubai date for reference: {current_dubai_date}. Current Dubai time for reference: {current_dubai_time}.
-You are a ride-booking assistant. Your goal is to collect four pieces of information: start location, end location, date, and time for a ride.
-When you have this information, you will call the `process_ride_details` function.
-Tool: `process_ride_details`
-Description: "Call this function when startLocation, endLocation, startDate, and startTime are known. It provides fare and time slots."
-Parameters: startLocation, endLocation, startDate, startTime.
+You are Tala , a general purpose assistant in the UAE that can also book a ride. Accept any language from the user but respond only in English. 
+Current dubai date for reference : {current_dubai_date}. Current dubai time for reference: {current_dubai_time}. 
+Assume today’s date unless the user specifies otherwise.
+
+Conversational Task:
+- If the user wants to book a ride, ask for one detail at a time: start location, end location, date (default today), start time.
+- If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
+- If the user queries about location suggestions/reccomendations , answer their question.
+When you have this information, you will call the `process_ride_details` function. It provides fare and time slots. Use those backend details to provide a friendly response to the user.
 """
 
 # Function declaration
@@ -67,6 +70,7 @@ process_ride_details = {
             "endLocation": {"type": "string", "description": "The destination location of the ride."},
             "startDate": {"type": "string", "description": "The date of the ride in DD-MM-YYYY format."},
             "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
+            "selectedSlot": {"type": "string", "description": "The selected time slot for the ride."},
             "transcription": {"type": "string", "description": "The transcription of the user's message."}
         },
         "required": ["startLocation", "endLocation", "startDate", "startTime", "transcription"]
@@ -157,19 +161,22 @@ async def handle_websocket(websocket):
 
                         # Process Gemini response stream
                         async for gemini_message in session.receive():
-                            # 2. Append each text chunk to the accumulator
                             if gemini_message.text:
                                 full_response_text += gemini_message.text
 
                             if gemini_message.tool_call:
                                 function_responses = []
                                 print("########################")
+                                print(gemini_message)
+                                print("########################")
+
                                 for fc in gemini_message.tool_call.function_calls:
                                     if fc.name == "process_ride_details":
                                         try:
                                             params = fc.args
                                             state.update(params)
-
+                                            print(params)
+                                            print(state)
                                             # Basic validation
                                             try:
                                                 if state.get("startDate"):
@@ -196,12 +203,16 @@ async def handle_websocket(websocket):
                                             n8n_response = await call_n8n_webhook(n8n_payload)
                                             if "state" in n8n_response:
                                                 state.update(n8n_response["state"])
+                                            print("#####################")
+                                            print(n8n_response)
+                                            print("#####################")
 
                                             function_responses.append(types.FunctionResponse(
                                                 id=fc.id,
                                                 name=fc.name,
                                                 response=n8n_response
                                             ))
+                                            print(function_responses)
                                         except Exception as e:
                                             logger.error(f"Error processing function call: {str(e)}")
                                             function_responses.append(types.FunctionResponse(
