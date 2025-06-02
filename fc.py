@@ -71,9 +71,8 @@ process_ride_details = {
             "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
             "selectedSlot": {"type": "string", "description": "The selected time slot for the ride."},
             "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
-            "transcription": {"type": "string", "description": "The transcription of the user's message."}
         },
-        "required": ["startLocation", "endLocation", "startDate", "startTime", "transcription"]
+        "required": ["startLocation", "endLocation", "startDate", "startTime"]
     }
 }
 
@@ -113,8 +112,6 @@ async def handle_websocket(websocket):
                     try:
                         data = json.loads(message)
                         user_input = data.get("text")
-                        logger.info(f"User input: {user_input}")
-
                         audio_input = data.get("audio")
 
                         if not user_input and not audio_input:
@@ -133,6 +130,7 @@ async def handle_websocket(websocket):
                         # Handle audio input
 
                         if audio_input:
+                            print("Audio input received")
                             try:
                                 audio_bytes = base64.b64decode(audio_input)
                                 buffer = io.BytesIO(audio_bytes)
@@ -151,6 +149,7 @@ async def handle_websocket(websocket):
                                 }))
                                 continue
                         else:
+                            print("Text input received" + user_input)
                             await session.send_client_content(
                                 turns={
                                     "role": "user",
@@ -163,6 +162,10 @@ async def handle_websocket(websocket):
                         async for gemini_message in session.receive():
                             if gemini_message.text:
                                 full_response_text += gemini_message.text
+                            
+                            if gemini_message.server_content and gemini_message.server_content.input_transcription:
+                                transcription = gemini_message.server_content.input_transcription.text
+                                print("Transcription: " + transcription)
 
                             if gemini_message.tool_call:
                                 function_responses = []
