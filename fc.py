@@ -50,27 +50,19 @@ logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_dat
 # System prompt
 SYSTEM_PROMPT = f"""
 You are Tala, a knowledgeable AI assistant for users in the UAE.
-You must handle all general conversation, answer questions, and provide relevant recommendations if the user requests it. Respond in a friendly, interactive manner.
+You must handle all general conversation, answer questions, and provide relevant recommendations if the user requests it. 
 Use conversation history to maintain context and avoid asking for the same information multiple times.
 Respond only in English. 
 Current date : {current_dubai_date}. Current time : {current_dubai_time}. Use this for all date and time references.
 
 Task:
 - If the user wants to book a ride, ask for one detail at a time: start location, end location, date (default today), start time.
-- When you have this information, you will call the `process_ride_details` function immidiately. It provides fare and time slots. Use those backend details to provide a friendly response to the user.Do not ask for user confirmation on collected details before calling the function.
+- When you have this information, you will call the `process_ride_details` function immidiately. It provides fare / available time slots. Use those backend details to provide a friendly response to the user. Do not ask for user confirmation on collected details before calling the function.
 - For airport locations, clarify which airport and terminal the user is referring to.
 - If the backend provides availaible time slots, ask the user to select a time slot. Then update the startTime with the selected time slot. 
 - If the user provides conflicting information, always use the latest information.
 - Assume today’s date as the ride's start date unless the user specifies otherwise.
-
-
-Critical Instruction: For every user input, your response MUST begin by restating the user's full, transcribed request inside `[TRANSCRIPTION]` and `[/TRANSCRIPTION]` markers. After the markers, you will continue with your helpful response or action.
-Example 1:
-User audio: "Hi, I need a ride"
-Your response: "[TRANSCRIPTION]Hi, I need a ride[/TRANSCRIPTION]Of course! I can help with that. Where would you like to be picked up from?"
-Example 2:
-User audio: "From Dubai Mall to the airport at 5 PM"
-Your response: "[TRANSCRIPTION]From Dubai Mall to the airport at 5 PM[/TRANSCRIPTION]Got it. Which airport and terminal are you referring to?"
+- Always respond to all user queries and form a friendly, interactive response.
 
 """
 
@@ -147,10 +139,10 @@ async def handle_websocket(websocket):
                             except Exception as e:
                                 await websocket.send(json.dumps({"error": f"Audio processing error: {str(e)}","session_id": session_id}))
                                 continue
+                            print("Process ho gaya audio input")
                         else:
                             print("Text input recieved")
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
-                        
                         full_response_text = ""
                         gemini_transcription = user_input or ""
                         async for gemini_message in session.receive():
@@ -197,29 +189,12 @@ async def handle_websocket(websocket):
                                 # Send function responses back to Gemini
                                 await session.send_tool_response(function_responses=function_responses)
 
-                        # 2. PARSE the accumulated text AFTER the stream is complete
                         if full_response_text:
-                            print("#####################")
-                            print(full_response_text)
-                            print("#####################")
-                            pattern = r'\[TRANSCRIPTION\](.*?)\[/TRANSCRIPTION\]'
-                            
-                            # Set default values
-                            final_transcription = user_input or "Transcription not found"
-                            cleaned_response = full_response_text
-
-                            match = re.search(pattern, full_response_text, re.DOTALL)
-                            if match:
-                                # If pattern is found, extract the clean data
-                                final_transcription = match.group(1).strip()
-                                cleaned_response = re.sub(pattern, '', full_response_text, flags=re.DOTALL).strip()
-                            
-                            # 3. SEND the final, clean payload to the frontend
                             await websocket.send(json.dumps({
-                                "response": cleaned_response,          # <-- CORRECTED: Send the clean response
+                                "response": full_response_text,         
                                 "session_id": session_id,
-                                "state": final_transcription,
-                                "transcription": gemini_transcription   # <-- CORRECTED: Send the high-quality transcription
+                                "state": state,
+                                "transcription": gemini_transcription
                             }))
 
                     except json.JSONDecodeError:
