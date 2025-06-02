@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook-test/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
@@ -71,6 +71,7 @@ process_ride_details = {
             "startDate": {"type": "string", "description": "The date of the ride in DD-MM-YYYY format."},
             "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
             "selectedSlot": {"type": "string", "description": "The selected time slot for the ride."},
+            "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
             "transcription": {"type": "string", "description": "The transcription of the user's message."}
         },
         "required": ["startLocation", "endLocation", "startDate", "startTime", "transcription"]
