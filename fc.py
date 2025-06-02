@@ -5,7 +5,6 @@ import requests
 from dotenv import load_dotenv
 import os
 from datetime import datetime
-from tenacity import retry, stop_after_attempt, wait_fixed
 from google import genai
 from google.genai import types
 import uuid
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook-test/chatbot")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
@@ -104,6 +103,7 @@ async def handle_websocket(websocket):
         async with asyncio.timeout(600):
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.TEXT],
+                input_audio_transcription={},
                 system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
                 tools=[tools]
             )
@@ -132,10 +132,6 @@ async def handle_websocket(websocket):
                             continue
                         # Handle audio input
 
-                        transcription = ""
-                        response = ""
-                        state_update = None
-
                         if audio_input:
                             try:
                                 audio_bytes = base64.b64decode(audio_input)
@@ -163,6 +159,7 @@ async def handle_websocket(websocket):
                                 turn_complete=True
                             )
                         full_response_text = ""
+                        transcription = user_input or ""
                         async for gemini_message in session.receive():
                             if gemini_message.text:
                                 full_response_text += gemini_message.text
