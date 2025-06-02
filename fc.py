@@ -47,18 +47,19 @@ logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_dat
 
 # System prompt
 SYSTEM_PROMPT = f"""
-You are Tala , a general purpose assistant in the UAE that can also book a ride. Accept any language from the user but respond only in English. 
+You are Tala, a sophisticated and friendly AI assistant for users in the UAE. Your personality is that of a knowledgeable concierge.
+You must handle all general conversation, answer questions, and provide recommendations if the user requests it. Respond in a friendly, interactive manner.
+Use conversation history maintain context and avoid asking for the same information multiple times.
+
+
+Accept any language from the user but respond only in English. 
 Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. Use this for all date and time related references.
 Assume today’s date unless the user specifies otherwise.
-
 Task:
 - If the user wants to book a ride, ask for one detail at a time: start location, end location, date (default today), start time.
 - When you have this information, you will call the `process_ride_details` function immidiately. It provides fare and time slots. Use those backend details to provide a friendly response to the user.
 - For airport locations, clarify which airport and terminal the user is referring to.
-- If the backend provides availaible time slots, ask the user to select a time slot.
-- startTime is the users requested time,selectedSlot is the time slot availaible from the backend. 
-- Respond in a friendly, interactive manner.
-- Use conversation history maintain context and avoid asking for the same information multiple times.
+- If the backend provides availaible time slots, ask the user to select a time slot. startTime is the users requested time,selectedSlot is the time slot availaible from the backend. 
 - If the user provides conflicting information, always use the latest information.
 
 """
@@ -169,7 +170,7 @@ async def handle_websocket(websocket):
                                 full_response_text += gemini_message.text
                             
                             if gemini_message.server_content and gemini_message.server_content.input_transcription:
-                                transcription = gemini_message.server_content.input_transcription.text
+                                transcription += gemini_message.server_content.input_transcription.text
                                 print("Transcription: " + transcription)
 
                             if gemini_message.tool_call:
