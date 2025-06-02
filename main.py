@@ -154,8 +154,6 @@ async def handle_websocket(websocket):
                                 # Decode base64 audio
                                 audio_bytes = base64.b64decode(audio_input)
                                 buffer = io.BytesIO(audio_bytes)
-
-                                # Convert to 16-bit PCM, 16kHz, mono
                                 y, sr = librosa.load(buffer, sr=16000, mono=True)
                                 pcm_buffer = io.BytesIO()
                                 sf.write(pcm_buffer, y, sr, format='RAW', subtype='PCM_16')

@@ -78,7 +78,6 @@ process_ride_details = {
     }
 }
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
     headers = {"Content-Type": "application/json"}
@@ -132,6 +131,11 @@ async def handle_websocket(websocket):
                             }))
                             continue
                         # Handle audio input
+
+                        transcription = ""
+                        response = ""
+                        state_update = None
+
                         if audio_input:
                             try:
                                 audio_bytes = base64.b64decode(audio_input)
@@ -159,8 +163,6 @@ async def handle_websocket(websocket):
                                 turn_complete=True
                             )
                         full_response_text = ""
-
-                        # Process Gemini response stream
                         async for gemini_message in session.receive():
                             if gemini_message.text:
                                 full_response_text += gemini_message.text
@@ -225,12 +227,12 @@ async def handle_websocket(websocket):
                                 # Send function responses back to Gemini
                                 await session.send_tool_response(function_responses=function_responses)
 
-                        # 3. After the loop, send the single, complete response
                         if full_response_text:
                             await websocket.send(json.dumps({
                                 "response": full_response_text.strip(),
                                 "session_id": session_id,
-                                "state": state
+                                "state": state,
+                                "transcription": transcription
                             }))
 
                     except json.JSONDecodeError:
