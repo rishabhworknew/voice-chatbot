@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
+PLACES_API_KEY = os.getenv("PLACES_API_KEY")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
@@ -77,6 +78,20 @@ process_ride_details = {
         "required": ["startLocation", "endLocation", "startDate", "startTime"]
     }
 }
+search_places = {
+    "name": "search_places",
+    "description": "Searches for places like restaurants, cafes, or landmarks based on a text query.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "textQuery": {
+                "type": "string",
+                "description": "The search query from the user, for example: 'italian restaurants in dubai' or 'cafes near dubai mall'."
+            }
+        },
+        "required": ["textQuery"]
+    }
+}
 
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
@@ -84,6 +99,28 @@ async def call_n8n_webhook(data):
     response = requests.post(N8N_WEBHOOK_URL, json=data, headers=headers)
     response.raise_for_status()
     return response.json()
+
+async def call_places_api(text_query: str):
+    """Calls the Google Places API to find places."""
+    headers = {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': PLACES_API_KEY,
+        'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.priceLevel',
+    }
+    data = {'textQuery': text_query}
+    url = 'https://places.googleapis.com/v1/places:searchText'
+
+    try:
+        # In a high-concurrency production app, consider using an async-native
+        # library like `httpx` instead of `requests`.
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, lambda: requests.post(url, json=data, headers=headers))
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Error calling Places API: {e}")
+        # Return a structured error that can be sent back to Gemini
+        return {"error": f"Failed to connect to Places API: {str(e)}"}
 
 async def handle_websocket(websocket):
     """Handle WebSocket connection from frontend"""
@@ -98,7 +135,7 @@ async def handle_websocket(websocket):
         "rideRejection": False
     }
     uae_tz = pytz.timezone("Asia/Dubai")
-    tools = types.Tool(function_declarations=[process_ride_details])
+    tools = types.Tool(function_declarations=[process_ride_details, search_places])
 
     try:
         async with asyncio.timeout(600):
@@ -158,10 +195,9 @@ async def handle_websocket(websocket):
                                 }))
                             if gemini_message.tool_call:
                                 function_responses = []
-                            
                                 for fc in gemini_message.tool_call.function_calls:
-                                    if fc.name == "process_ride_details":
-                                        try:
+                                    try:
+                                        if fc.name == "process_ride_details":
                                             params = fc.args
                                             state.update(params)
                                             try:
@@ -169,28 +205,31 @@ async def handle_websocket(websocket):
                                                 if state.get("startTime"): datetime.strptime(state["startTime"], "%I:%M %p")
                                             except ValueError as e:
                                                 logger.error(f"Invalid state format: {str(e)}")
-                                                function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": f"Invalid state format: {str(e)}"}))
+                                                function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": f"Invalid date/time format: {str(e)}"}))
                                                 continue
                                             
-                                            # In your n8n payload, you might want to send the clean transcription later
-                                            n8n_payload = {"message": user_input,"session_id": session_id,"state": state,"timestamp": datetime.now(uae_tz).isoformat(),"headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_payload = {"message": gemini_transcription,"session_id": session_id,"state": state,"timestamp": datetime.now(uae_tz).isoformat(),"headers": {"authorization": data.get("authorization", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
                                             if "state" in n8n_response:
                                                 state.update(n8n_response["state"])
-                                            print("#####################")
-                                            print(n8n_response)
-                                            print("#####################")
 
                                             function_responses.append(types.FunctionResponse(
                                                 id=fc.id,
                                                 name=fc.name,
                                                 response=n8n_response
                                             ))
+                                        elif fc.name == "search_places":
+                                            logger.info(f"Executing search_places with query: {fc.args['textQuery']}")
+                                            places_response = await call_places_api(fc.args['textQuery'], API_KEY)
+                                            function_responses.append(types.FunctionResponse(
+                                                id=fc.id,
+                                                name=fc.name,
+                                                response=places_response
+                                            ))
+                                    except Exception as e:
+                                        logger.error(f"Error processing function call '{fc.name}': {str(e)}")
+                                        function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
 
-                                            print(function_responses)
-                                        except Exception as e:
-                                            logger.error(f"Error processing function call: {str(e)}")
-                                            function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
                                 await session.send_tool_response(function_responses=function_responses)
 
                         await websocket.send(json.dumps({
