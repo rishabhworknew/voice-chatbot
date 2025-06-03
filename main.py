@@ -4,20 +4,20 @@ import json
 import requests
 from dotenv import load_dotenv
 import os
-from datetime import datetime, UTC, timedelta
-import pytz
-from tenacity import retry, stop_after_attempt, wait_fixed
+from datetime import datetime
 from google import genai
 from google.genai import types
 import uuid
 import logging
-import re
+import base64
 import io
 import soundfile as sf
 import librosa
-import base64
+import pytz
+import re
 
-# Configure logging - FINAL
+
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -45,51 +45,44 @@ def get_dubai_date():
 
 current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
-logger.info(f"Current Dubai time : {current_dubai_time} , date : {current_dubai_date}")
+logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
+
+# System prompt
 SYSTEM_PROMPT = f"""
-You are Tala , a general purpose assistant in the UAE that can also book a ride. Accept any language from the user but respond only in English. 
-Current dubai date : {current_dubai_date}. Current dubai time : {current_dubai_time}. 
-Assume today’s date unless the user specifies otherwise.
+You are Tala, a knowledgeable AI assistant for users in the UAE.
+You must handle all general conversation, answer questions, and provide relevant recommendations if the user requests it. 
+Use conversation history to maintain context and avoid asking for the same information multiple times.
+Respond only in English. 
+Current date : {current_dubai_date}. Current time : {current_dubai_time}. Use this for all date and time references.
 
-Conversational Task:
+Task:
 - If the user wants to book a ride, ask for one detail at a time: start location, end location, date (default today), start time.
-- If the user asks unrelated questions, gently redirect to booking after acknowledging the question.
-- If the user queries about location suggestions/reccomendations , answer their question.
+- When you have this information, you will call the `process_ride_details` function immidiately. It provides fare / available time slots. Use those backend details to provide a friendly response to the user. Do not ask for user confirmation on collected details before calling the function.
+- For airport locations, clarify which airport and terminal the user is referring to.
+- If the backend provides availaible time slots, ask the user to select a time slot. Then update the startTime with the selected time slot. 
+- If the user provides conflicting information, always use the latest information.
+- Assume today’s date as the ride's start date unless the user specifies otherwise.
+- Always respond to all user queries and form a friendly, interactive response.
 
-State Extraction:
-Extract and update these fields based on the user’s message and history:
-- "startLocation": string (e.g., "Dubai Airport Terminal 1")
-- "endLocation": string (e.g., "Dubai Mall")
-- "startDate": string (DD-MM-YYYY, default today)
-- "startTime": string (H:MM AM/PM, e.g., "2:00 PM")
-- "selectedSlot": string (e.g., "02:00 PM") if user selects a slot
-- "rideConfirmation": boolean (true if user says "yes" after fare)
-- "rideRejection": boolean (true if user says "no" after fare)
-Update fields with new information, keeping prior values unless contradicted.
-
-Output:
-Always return a JSON object in this format:
-{{
-    "transcription": "Transcription of the user's message",
-    "response": "Your concise, friendly, and interactive response",
-    "state": {{ "startLocation": null, "endLocation": null, "startDate": null, "startTime": null, "selectedSlot": null, "rideConfirmation": false, "rideRejection": false }}
-}}
 """
-# logger.info(f"System prompt: {SYSTEM_PROMPT}")
 
-def validate_state(state):
-    """Validate state fields"""
-    try:
-        if state["startDate"]:
-            datetime.strptime(state["startDate"], "%d-%m-%Y")
-        if state["startTime"]:
-            datetime.strptime(state["startTime"], "%I:%M %p")
-        return state
-    except ValueError as e:
-        logger.error(f"Invalid state format: {str(e)}")
-        raise ValueError(f"Invalid state format: {str(e)}")
+# Function declaration
+process_ride_details = {
+    "name": "process_ride_details",
+    "description": "Processes ride booking details to fetch fare / available time slots.To be called immidiately after collecting the required ride details.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "startLocation": {"type": "string", "description": "The starting location of the ride."},
+            "endLocation": {"type": "string", "description": "The destination location of the ride."},
+            "startDate": {"type": "string", "description": "The date of the ride in DD-MM-YYYY format."},
+            "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
+            "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
+        },
+        "required": ["startLocation", "endLocation", "startDate", "startTime"]
+    }
+}
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
     headers = {"Content-Type": "application/json"}
@@ -110,215 +103,118 @@ async def handle_websocket(websocket):
         "rideRejection": False
     }
     uae_tz = pytz.timezone("Asia/Dubai")
+    tools = types.Tool(function_declarations=[process_ride_details])
 
     try:
-        async with asyncio.timeout(600):  # 10-minute timeout for inactivity
-            # Configure Live API session with system instruction (remove input_audio_transcription)
+        async with asyncio.timeout(600):
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.TEXT],
-                system_instruction=types.Content(
-                    parts=[types.Part(text=SYSTEM_PROMPT)]
-                )
+                input_audio_transcription={},
+                system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
+                tools=[tools]
             )
 
             async with client.aio.live.connect(model=model_id, config=config) as session:
                 async for message in websocket:
                     try:
-                        # Parse incoming message
                         data = json.loads(message)
                         user_input = data.get("text")
-                        logger.info(f"User input: {user_input}")
-                        audio_input = data.get("audio")  # Base64 audio (if provided)
-
+                        audio_input = data.get("audio")
                         if not user_input and not audio_input:
-                            await websocket.send(json.dumps({
-                                "error": "No input received",
-                                "session_id": session_id
-                            }))
+                            await websocket.send(json.dumps({"error": "No input received","session_id": session_id}))
                             continue
-
                         if not data.get("authorization"):
-                            await websocket.send(json.dumps({
-                                "error": "Missing authorization",
-                                "session_id": session_id
-                            }))
+                            await websocket.send(json.dumps({"error": "Missing authorization","session_id": session_id}))
                             continue
-
-                        # Initialize variables
-                        transcription = ""
-                        response = ""
-                        state_update = None
-
                         if audio_input:
+                            print("Audio input recieved")
                             try:
-                                # Decode base64 audio
                                 audio_bytes = base64.b64decode(audio_input)
                                 buffer = io.BytesIO(audio_bytes)
                                 y, sr = librosa.load(buffer, sr=16000, mono=True)
                                 pcm_buffer = io.BytesIO()
                                 sf.write(pcm_buffer, y, sr, format='RAW', subtype='PCM_16')
                                 pcm_buffer.seek(0)
-
-                                # Send audio to Gemini
-                                await session.send_realtime_input(
-                                    audio=types.Blob(data=pcm_buffer.read(), mime_type="audio/pcm;rate=16000")
-                                )
-
-                                # Process Gemini response
-                                response_text_parts = []
-                                async for gemini_message in session.receive():
-                                    if gemini_message.text:
-                                        response_text_parts.append(gemini_message.text)
-                                    if gemini_message.server_content and gemini_message.server_content.turn_complete:
-                                        break
-
-                                raw_gemini_response_str = "".join(response_text_parts)
-                                logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
-
-                                # Extract JSON from markdown fences
-                                json_to_parse = raw_gemini_response_str
-                                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
-                                if match:
-                                    json_to_parse = match.group(1)
-
-                                # Parse Gemini's JSON response
-                                try:
-                                    gemini_output = json.loads(json_to_parse.strip())
-                                    transcription = gemini_output.get("transcription", "")
-                                    response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
-                                    state_update = gemini_output.get("state")
-                                    if state_update is not None:
-                                        state = validate_state(state_update)
-                                    logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
-                                    response = "Sorry, something went wrong processing the response. Please try again."
-                                except ValueError as e:
-                                    logger.error(f"State validation error: {e}. Offending state: {state_update}")
-                                    response = f"Sorry, there was an issue with the data format: {e}"
+                                await session.send_realtime_input(audio=types.Blob(data=pcm_buffer.read(), mime_type="audio/pcm;rate=16000"))
                             except Exception as e:
-                                await websocket.send(json.dumps({
-                                    "error": f"Audio processing error: {str(e)}",
-                                    "session_id": session_id
-                                }))
+                                await websocket.send(json.dumps({"error": f"Audio processing error: {str(e)}","session_id": session_id}))
                                 continue
+                            print("Process ho gaya audio input")
                         else:
-                            # Handle text input
-                            try:
-                                await session.send_client_content(
-                                    turns={
-                                        "role": "user",
-                                        "parts": [{"text": user_input}]
-                                    },
-                                    turn_complete=True
-                                )
+                            print("Text input recieved")
+                            await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
+                        full_response_text = ""
+                        gemini_transcription = user_input or ""
+                        async for gemini_message in session.receive():
+                            if gemini_message.text:
+                                full_response_text += gemini_message.text
+                            if gemini_message.server_content and gemini_message.server_content.input_transcription:
+                                gemini_transcription += gemini_message.server_content.input_transcription.text
+                            if gemini_message.tool_call:
+                                function_responses = []
+                            
+                                for fc in gemini_message.tool_call.function_calls:
+                                    if fc.name == "process_ride_details":
+                                        try:
+                                            params = fc.args
+                                            state.update(params)
+                                            # Basic validation
+                                            try:
+                                                if state.get("startDate"): datetime.strptime(state["startDate"], "%d-%m-%Y")
+                                                if state.get("startTime"): datetime.strptime(state["startTime"], "%I:%M %p")
+                                            except ValueError as e:
+                                                logger.error(f"Invalid state format: {str(e)}")
+                                                function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": f"Invalid state format: {str(e)}"}))
+                                                continue
+                                            
+                                            # In your n8n payload, you might want to send the clean transcription later
+                                            n8n_payload = {"message": user_input,"session_id": session_id,"state": state,"timestamp": datetime.now(uae_tz).isoformat(),"headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_response = await call_n8n_webhook(n8n_payload)
+                                            if "state" in n8n_response:
+                                                state.update(n8n_response["state"])
+                                            print("#####################")
+                                            print(n8n_response)
+                                            print("#####################")
 
-                                # Process Gemini response
-                                response_text_parts = []
-                                async for gemini_message in session.receive():
-                                    if gemini_message.text:
-                                        response_text_parts.append(gemini_message.text)
-                                    if gemini_message.server_content and gemini_message.server_content.turn_complete:
-                                        break
+                                            function_responses.append(types.FunctionResponse(
+                                                id=fc.id,
+                                                name=fc.name,
+                                                response=n8n_response
+                                            ))
 
-                                raw_gemini_response_str = "".join(response_text_parts)
-                                logger.info(f"Raw Gemini response: {raw_gemini_response_str}")
+                                            print(function_responses)
+                                        except Exception as e:
+                                            logger.error(f"Error processing function call: {str(e)}")
+                                            function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
+                                # Send function responses back to Gemini
+                                await session.send_tool_response(function_responses=function_responses)
 
-                                # Extract JSON from markdown fences
-                                json_to_parse = raw_gemini_response_str
-                                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_gemini_response_str)
-                                if match:
-                                    json_to_parse = match.group(1)
-
-                                # Parse Gemini's JSON response
-                                try:
-                                    gemini_output = json.loads(json_to_parse.strip())
-                                    transcription = gemini_output.get("transcription", user_input or "")  # Use user_input as fallback
-                                    response = gemini_output.get("response", "Sorry, something went wrong with the expected output format.")
-                                    state_update = gemini_output.get("state")
-                                    if state_update is not None:
-                                        state = validate_state(state_update)
-                                    logger.info(f"Successfully parsed Gemini JSON: {gemini_output}")
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"JSONDecodeError: {e}. String attempted for parsing: '{json_to_parse.strip()}'")
-                                    response = "Sorry, something went wrong processing the response. Please try again."
-                                except ValueError as e:
-                                    logger.error(f"State validation error: {e}. Offending state: {state_update}")
-                                    response = f"Sorry, there was an issue with the data format: {e}"
-                            except Exception as e:
-                                await websocket.send(json.dumps({
-                                    "error": f"Gemini API error: {str(e)}",
-                                    "session_id": session_id
-                                }))
-                                return
-
-                        # Check if all required fields are fulfilled
-                        required_fields = ["startLocation", "endLocation", "startDate", "startTime"]
-                        all_fields_fulfilled = all(state[field] is not None and state[field].strip() != "" for field in required_fields)
-
-                        # Prepare frontend response
-                        frontend_response = {
-                            "response": response,
-                            "session_id": session_id,
-                            "state": state,
-                            "transcription": transcription
-                        }
-                        logger.info(f"Frontend response: {frontend_response}")
-
-                        if all_fields_fulfilled:
-                            # Prepare n8n payload
-                            n8n_payload = {
-                                "message": transcription or user_input,  # Prefer transcription, fallback to user_input
-                                "session_id": data.get("session_id", session_id),
-                                "response": response,
+                        if full_response_text:
+                            await websocket.send(json.dumps({
+                                "response": full_response_text,         
+                                "session_id": session_id,
                                 "state": state,
-                                "transcription": transcription,
-                                "timestamp": datetime.now(uae_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                                "headers": {"authorization": data.get("authorization", "")}
-                            }
-                            logger.info(f"N8N payload: {n8n_payload}")
-                            # Send to n8n
-                            try:
-                                logger.info("All required fields fulfilled, sending to n8n webhook")
-                                n8n_processed_data = await call_n8n_webhook(n8n_payload)
-                                logger.info(f"Received from n8n: {n8n_processed_data}")
-
-                                # Update frontend response with n8n data
-                                frontend_response["response"] = n8n_processed_data.get("response", response)
-                                logger.info(f"Updated response: {frontend_response['response']}")
-                                frontend_response["state"] = n8n_processed_data.get("state", state)
-                                logger.info(f"Updated state: {frontend_response['state']}")
-                            except requests.RequestException as e:
-                                logger.error(f"Webhook error: {str(e)}")
-                                frontend_response["response"] = "Sorry, there was an issue contacting our backend services."
-                        else:
-                            logger.info("Not all required fields fulfilled, skipping n8n webhook call")
-
-                        # Send response to frontend
-                        await websocket.send(json.dumps(frontend_response))
+                                "transcription": gemini_transcription
+                            }))
 
                     except json.JSONDecodeError:
-                        await websocket.send(json.dumps({
-                            "error": "Invalid JSON format: Please send a valid JSON object",
-                            "session_id": session_id
-                        }))
+                        await websocket.send(json.dumps({"error": "Invalid JSON format: Please send a valid JSON object","session_id": session_id}))
+                    except requests.RequestException as e:
+                        await websocket.send(json.dumps({"error": f"Webhook error: {str(e)}","session_id": session_id}))
                     except Exception as e:
-                        await websocket.send(json.dumps({
-                            "error": f"Unexpected error: {str(e)}",
-                            "session_id": session_id
-                        }))
+                        await websocket.send(json.dumps({"error": f"Unexpected error: {str(e)}","session_id": session_id}))
 
     except asyncio.TimeoutError:
         await websocket.close(code=1000, reason="Inactivity timeout")
     except websockets.exceptions.ConnectionClosed:
-        pass  # Handle client disconnect gracefully
+        pass
     except Exception as e:
         await websocket.send(json.dumps({"error": str(e), "session_id": session_id}))
 
 async def main():
     async with websockets.serve(handle_websocket, "0.0.0.0", 8765):
         print("WebSocket server started on ws://0.0.0.0:8765")
-        await asyncio.Future()  # Run forever
+        await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
