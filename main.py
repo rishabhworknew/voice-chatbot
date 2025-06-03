@@ -16,12 +16,9 @@ import librosa
 import pytz
 import re
 
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -29,7 +26,6 @@ N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/ch
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
-# Initialize Gemini Live API client
 client = genai.Client(api_key=API_KEY)
 model_id = "gemini-2.0-flash-live-001"
 
@@ -47,7 +43,6 @@ current_dubai_time = get_dubai_time()
 current_dubai_date = get_dubai_date()
 logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-# System prompt
 SYSTEM_PROMPT = f"""
 You are Tala, a knowledgeable AI assistant for users in the UAE.
 You must handle all general conversation, answer questions, and provide relevant recommendations if the user requests it. 
@@ -147,7 +142,6 @@ async def handle_websocket(websocket):
                         gemini_transcription = user_input or ""
 
                         async for gemini_message in session.receive():
-                            # 1. Handle text chunks and stream them immediately
                             if gemini_message.text:
                                 await websocket.send(json.dumps({
                                     "type": "chunk", 
@@ -155,7 +149,6 @@ async def handle_websocket(websocket):
                                     "session_id": session_id,
                                 }))
 
-                            # 2. Handle transcription updates (optional, but good for UX)
                             if gemini_message.server_content and gemini_message.server_content.input_transcription:
                                 gemini_transcription += gemini_message.server_content.input_transcription.text
                                 await websocket.send(json.dumps({
@@ -171,7 +164,6 @@ async def handle_websocket(websocket):
                                         try:
                                             params = fc.args
                                             state.update(params)
-                                            # Basic validation
                                             try:
                                                 if state.get("startDate"): datetime.strptime(state["startDate"], "%d-%m-%Y")
                                                 if state.get("startTime"): datetime.strptime(state["startTime"], "%I:%M %p")
@@ -199,7 +191,6 @@ async def handle_websocket(websocket):
                                         except Exception as e:
                                             logger.error(f"Error processing function call: {str(e)}")
                                             function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
-                                # Send function responses back to Gemini
                                 await session.send_tool_response(function_responses=function_responses)
 
                         await websocket.send(json.dumps({
