@@ -69,7 +69,7 @@ Task:
 # Function declaration
 process_ride_details = {
     "name": "process_ride_details",
-    "description": "Processes ride booking details to fetch fare / available time slots.To be called immidiately after collecting the required ride details.",
+    "description": "Processes ride booking details to fetch service availaibility / fare / time slots. To be called immidiately after collecting the required ride details.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -136,20 +136,33 @@ async def handle_websocket(websocket):
                                 sf.write(pcm_buffer, y, sr, format='RAW', subtype='PCM_16')
                                 pcm_buffer.seek(0)
                                 await session.send_realtime_input(audio=types.Blob(data=pcm_buffer.read(), mime_type="audio/pcm;rate=16000"))
+                                print("Audio Sent")
                             except Exception as e:
                                 await websocket.send(json.dumps({"error": f"Audio processing error: {str(e)}","session_id": session_id}))
                                 continue
-                            print("Process ho gaya audio input")
                         else:
                             print("Text input recieved")
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
                         full_response_text = ""
                         gemini_transcription = user_input or ""
+
                         async for gemini_message in session.receive():
+                            # 1. Handle text chunks and stream them immediately
                             if gemini_message.text:
-                                full_response_text += gemini_message.text
+                                await websocket.send(json.dumps({
+                                    "type": "chunk", 
+                                    "response_chunk": gemini_message.text,
+                                    "session_id": session_id,
+                                }))
+
+                            # 2. Handle transcription updates (optional, but good for UX)
                             if gemini_message.server_content and gemini_message.server_content.input_transcription:
                                 gemini_transcription += gemini_message.server_content.input_transcription.text
+                                await websocket.send(json.dumps({
+                                    "type": "chunk", 
+                                    "transcription_chunk": gemini_message.server_content.input_transcription.text,
+                                    "session_id": session_id,
+                                }))
                             if gemini_message.tool_call:
                                 function_responses = []
                             
@@ -189,13 +202,10 @@ async def handle_websocket(websocket):
                                 # Send function responses back to Gemini
                                 await session.send_tool_response(function_responses=function_responses)
 
-                        if full_response_text:
-                            await websocket.send(json.dumps({
-                                "response": full_response_text,         
-                                "session_id": session_id,
-                                "state": state,
-                                "transcription": gemini_transcription
-                            }))
+                        await websocket.send(json.dumps({
+                            "type": "final", 
+                            "session_id": session_id,
+                        }))
 
                     except json.JSONDecodeError:
                         await websocket.send(json.dumps({"error": "Invalid JSON format: Please send a valid JSON object","session_id": session_id}))
