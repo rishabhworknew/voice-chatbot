@@ -7,6 +7,8 @@ import os
 from datetime import datetime
 from google import genai
 from google.genai import types
+from google.genai.types import Tool
+from google.genai.types import GoogleSearch
 import uuid
 import logging
 import base64
@@ -45,13 +47,12 @@ current_dubai_date = get_dubai_date()
 logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
 SYSTEM_PROMPT = f"""
-You are Tala, a knowledgeable AI assistant for users in the UAE.
-You must handle all general conversation, answer questions, and provide relevant recommendations if the user requests it. 
+You are Tala, a knowledgeable AI assistant for users in the UAE handling all general conversation, answer questions, and provide relevant recommendations if the user requests it. 
 Use conversation history to maintain context and avoid asking for the same information multiple times.
 Respond only in English. 
 Current date : {current_dubai_date}. Current time : {current_dubai_time}. Use this for all date and time references.
 
-Task:
+Ride booking Task:
 - If the user wants to book a ride, ask for one detail at a time: start location, end location, date (default today), start time.
 - When you have this information, you will call the `process_ride_details` function immidiately. It provides fare / available time slots. Use those backend details to provide a friendly response to the user. Do not ask for user confirmation on collected details before calling the function.
 - For airport locations, clarify which airport and terminal the user is referring to.
@@ -59,9 +60,10 @@ Task:
 - If the user provides conflicting information, always use the latest information.
 - Assume today’s date as the ride's start date unless the user specifies otherwise.
 - Always respond to all user queries and form a friendly, interactive response.
-
 """
-
+google_search_tool = Tool(
+    google_search = GoogleSearch()
+)
 # Function declaration
 process_ride_details = {
     "name": "process_ride_details",
@@ -105,14 +107,15 @@ async def call_places_api(text_query: str):
     headers = {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.priceLevel',
+        'X-Goog-FieldMask': 'places.displayName,places.formattedAddress',
     }
-    data = {'textQuery': text_query}
+    data = {
+        'textQuery': text_query,
+        'maxResultCount': 5
+    }
     url = 'https://places.googleapis.com/v1/places:searchText'
 
     try:
-        # In a high-concurrency production app, consider using an async-native
-        # library like `httpx` instead of `requests`.
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, lambda: requests.post(url, json=data, headers=headers))
         response.raise_for_status()
@@ -135,7 +138,9 @@ async def handle_websocket(websocket):
         "rideRejection": False
     }
     uae_tz = pytz.timezone("Asia/Dubai")
-    tools = types.Tool(function_declarations=[process_ride_details, search_places])
+    tools = types.Tool(function_declarations=[process_ride_details])
+    # tools = types.Tool(function_declarations=[process_ride_details, search_places])
+
 
     try:
         async with asyncio.timeout(600):
@@ -218,14 +223,14 @@ async def handle_websocket(websocket):
                                                 name=fc.name,
                                                 response=n8n_response
                                             ))
-                                        elif fc.name == "search_places":
+                                        """elif fc.name == "search_places":
                                             logger.info(f"Executing search_places with query: {fc.args['textQuery']}")
-                                            places_response = await call_places_api(fc.args['textQuery'], API_KEY)
+                                            places_response = await call_places_api(fc.args['textQuery'])
                                             function_responses.append(types.FunctionResponse(
                                                 id=fc.id,
                                                 name=fc.name,
                                                 response=places_response
-                                            ))
+                                            ))"""
                                     except Exception as e:
                                         logger.error(f"Error processing function call '{fc.name}': {str(e)}")
                                         function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
