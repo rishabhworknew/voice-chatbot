@@ -8,7 +8,6 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 from google.genai.types import Tool
-from google.genai.types import GoogleSearch
 import uuid
 import logging
 import base64
@@ -16,7 +15,6 @@ import io
 import soundfile as sf
 import librosa
 import pytz
-import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,56 +30,9 @@ if not API_KEY:
 client = genai.Client(api_key=API_KEY)
 model_id = "gemini-2.0-flash-live-001"
 
-def get_dubai_time():
-    dubai_tz = pytz.timezone("Asia/Dubai")
-    dubai_time = datetime.now(dubai_tz)
-    return dubai_time.strftime("%I:%M %p")
-
-def get_dubai_date():
-    dubai_tz = pytz.timezone("Asia/Dubai")
-    dubai_time = datetime.now(dubai_tz)
-    return dubai_time.strftime("%d-%m-%Y")
-
-current_dubai_time = get_dubai_time()
-current_dubai_date = get_dubai_date()
-logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
-
-SYSTEM_PROMPT = f"""You are Tala, a friendly and knowledgeable AI assistant designed for users in the UAE. You handle general conversations, answer questions, and provide relevant recommendations when requested, tailoring responses to the UAE context where appropriate. 
-Use conversation history to maintain context and avoid repeating questions unnecessarily. Respond only in English.
-
-Date and Time Reference: Current date is {current_dubai_date}. Current time is {current_dubai_time}. Use these for all date and time references in responses.
-
-Ride Booking Flow:
-- If the user expresses intent to book a ride, collect ride details one at a time : 
-    - start location
-    - end location
-    - start time
-    - start date (default to {current_dubai_date}, unless specified otherwise by the user on their own)
-
-- Once all required details (start location, end location, date, and start time) are collected, immediately call the 'process_ride_details' function WITHOUT confirming the details with the user.
-- Use the function response to provide a friendly, clear summary of the details provided by the function. 
-- If time slots are returned, ask the user to select one, then update the start time with the chosen slot.
-- Only when the user confirms to book ride AFTER being presented with the fare , proceed to call the 'process_ride_details' function with the ride confirmation set to true.
-
-Ride booking guielines:
-- For airport-related locations, clarify which airport and terminal (e.g., Dubai International Airport, Terminal 1, 2, or 3).
-- Only use the backend response to provide fares and time slots.
-- If the user provides conflicting information, prioritize the most recent details provided.
-- Maintain a conversational tone, responding to all user queries in a friendly, engaging and relevant manner.
-
-General Guidelines:
-- Keep replies concise, clear, and informative.
-- For non-ride questions, provide accurate, UAE-relevant answers or suggestions.
-- Tailor all recommendations to the UAE context—practical, localized, and relevant.
-- Avoid technical terms; keep your language simple and approachable, ensuring responses feel natural and approachable.
-"""
-google_search_tool = Tool(
-    google_search = GoogleSearch()
-)
-# Function declaration
 process_ride_details = {
     "name": "process_ride_details",
-    "description": "Processes ride booking details to fetch service availaibility / fare / time slots. To be called immidiately after collecting the required ride details.",
+    "description": "Processes ride booking details to fetch service availaibility / fare / time slots. To be called immidiately after collecting start location , end location , start time , date .",
     "parameters": {
         "type": "object",
         "properties": {
@@ -94,20 +45,21 @@ process_ride_details = {
         "required": ["startLocation", "endLocation", "startDate", "startTime"]
     }
 }
-search_places = {
-    "name": "search_places",
-    "description": "Searches for places like restaurants, cafes, or landmarks based on a text query.",
+
+book_ride = {
+    "name": "book_ride",
+    "description": "Books a ride with the provided details. Only call this function when the user confirms to book the ride after being presented with the fare.",
     "parameters": {
         "type": "object",
         "properties": {
-            "textQuery": {
-                "type": "string",
-                "description": "The search query from the user, for example: 'italian restaurants in dubai' or 'cafes near dubai mall'."
-            }
+            "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
+            "session_id": {"type": "string", "description": "The session id , fetched after the fare is calculated."},
         },
-        "required": ["textQuery"]
+        "required": ["rideConfirmation","session_id"]
     }
 }
+
+
 
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
@@ -116,31 +68,36 @@ async def call_n8n_webhook(data):
     response.raise_for_status()
     return response.json()
 
-async def call_places_api(text_query: str):
-    """Calls the Google Places API to find places."""
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.displayName,places.formattedAddress',
-    }
-    data = {
-        'textQuery': text_query,
-        'maxResultCount': 5
-    }
-    url = 'https://places.googleapis.com/v1/places:searchText'
-
-    try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: requests.post(url, json=data, headers=headers))
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logger.error(f"Error calling Places API: {e}")
-        # Return a structured error that can be sent back to Gemini
-        return {"error": f"Failed to connect to Places API: {str(e)}"}
 
 async def handle_websocket(websocket):
-    """Handle WebSocket connection from frontend"""
+    dubai_tz = pytz.timezone("Asia/Dubai")
+    now_in_dubai = datetime.now(dubai_tz)
+    current_dubai_time = now_in_dubai.strftime("%I:%M %p")
+    current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
+    logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
+
+    SYSTEM_PROMPT = f"""You are Tala, a friendly and knowledgeable AI assistant designed for users in the UAE. You handle general conversations, answer questions, provide relevant recommendations and book rides if requested, tailoring responses to the UAE context where appropriate. 
+Current date is {current_dubai_date}. Current time is {current_dubai_time}. Use these for all date and time references in responses.
+Use conversation history to maintain context and avoid repeating questions unnecessarily. Respond only in English.
+
+Ride Booking Flow:
+- If the user expresses intent to book a ride, collect ride details one at a time : 
+    - start location
+    - end location
+    - start time
+    - start date (default to {current_dubai_date}, unless specified otherwise by the user on their own)
+
+- Once all required details (start location, end location, date, and start time) are collected, immediately call the 'process_ride_details' function.
+- Use the function response to provide a friendly, clear summary of the details provided by the function. 
+- If time slots are returned, ask the user to select one, then update the start time with the chosen slot.
+- Only when the user confirms to book ride AFTER being presented with the fare , proceed to call the 'process_ride_details' function with the ride confirmation set to true.
+
+Ride booking guielines:
+- For airport-related locations, clarify which airport and terminal (e.g., Dubai International Airport, Terminal 1, 2, or 3).
+- Only use the backend response to provide fares and time slots.
+- If the user provides conflicting information, prioritize the most recent details provided.
+- Maintain a conversational tone, responding to all user queries in a friendly, engaging and relevant manner.
+"""
     session_id = f"{int(asyncio.get_event_loop().time())}-{uuid.uuid4().hex[:8]}"
     state = {
         "startLocation": None,
@@ -149,10 +106,7 @@ async def handle_websocket(websocket):
         "startTime": None,
         "rideConfirmation": False,
     }
-    uae_tz = pytz.timezone("Asia/Dubai")
-    tools = types.Tool(function_declarations=[process_ride_details])
-    # tools = types.Tool(function_declarations=[process_ride_details, search_places])
-
+    tools = types.Tool(function_declarations=[process_ride_details, book_ride])
 
     try:
         async with asyncio.timeout(600):
@@ -225,7 +179,7 @@ async def handle_websocket(websocket):
                                                 function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": f"Invalid date/time format: {str(e)}"}))
                                                 continue
                                             
-                                            n8n_payload = {"message": gemini_transcription,"session_id": session_id,"state": state,"timestamp": datetime.now(uae_tz).isoformat(),"headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_payload = {"message": gemini_transcription,"session_id": session_id,"state": state,"headers": {"authorization": data.get("authorization", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
                                             if "state" in n8n_response:
                                                 state.update(n8n_response["state"])
@@ -235,14 +189,17 @@ async def handle_websocket(websocket):
                                                 name=fc.name,
                                                 response=n8n_response
                                             ))
-                                        """elif fc.name == "search_places":
-                                            logger.info(f"Executing search_places with query: {fc.args['textQuery']}")
-                                            places_response = await call_places_api(fc.args['textQuery'])
+                                        elif fc.name == "book_ride":
+                                            params = fc.args
+                                            state.update(params)
+                                            n8n_payload = {"session_id": session_id,"state": state,"headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_response = await call_n8n_webhook(n8n_payload)
+
                                             function_responses.append(types.FunctionResponse(
                                                 id=fc.id,
                                                 name=fc.name,
-                                                response=places_response
-                                            ))"""
+                                                response=n8n_response
+                                            ))
                                     except Exception as e:
                                         logger.error(f"Error processing function call '{fc.name}': {str(e)}")
                                         function_responses.append(types.FunctionResponse(id=fc.id,name=fc.name,response={"error": str(e)}))
