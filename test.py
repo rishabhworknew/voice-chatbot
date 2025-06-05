@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-PLACES_API_KEY = os.getenv("PLACES_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
