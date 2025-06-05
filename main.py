@@ -178,7 +178,6 @@ If at any point the user changes their mind or one of the details (like location
                         else:
                             print("Text input recieved")
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
-                        full_response_text = ""
                         gemini_transcription = user_input or ""
 
                         async for gemini_message in session.receive():
