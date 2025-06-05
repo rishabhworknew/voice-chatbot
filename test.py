@@ -47,10 +47,8 @@ You are a versatile and friendly AI assistant."""
                             await websocket.send(json.dumps({"type": "final"}))
                             print("Gemini turn complete.")
 
-                except websockets.exceptions.ConnectionClosed:
-                    logger.info("Connection closed while streaming from Gemini.")
                 except Exception as e:
-                    logger.error(f"Error in gemini_to_client task: {e}")
+                    print(f"Error in gemini_to_client task: {e}")
                     await websocket.send(json.dumps({"error": str(e)}))
 
             # TASK 2: Receive from Client and send to Gemini
@@ -63,10 +61,8 @@ You are a versatile and friendly AI assistant."""
                             print("Client sent text:", user_input)
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
                             print("Client sent text to Gemini.")
-                except websockets.exceptions.ConnectionClosed:
-                    logger.info("Client connection closed.")
                 except Exception as e:
-                    logger.error(f"Error in client_to_gemini task: {e}")
+                    print(f"Error in client_to_gemini task: {e}")
                     await websocket.send(json.dumps({"error": str(e)}))
 
             await asyncio.gather(gemini_to_client(), client_to_gemini())
@@ -74,7 +70,7 @@ You are a versatile and friendly AI assistant."""
             print("Session ended.")
 
     except Exception as e:
-        logger.error(f"Overall websocket error: {e}")
+        print(f"Overall websocket error: {e}")
         try:
             await websocket.send(json.dumps({"error": str(e)}))
         except websockets.exceptions.ConnectionClosed:
