@@ -221,24 +221,25 @@ If at any point the user changes their mind or one of the details (like location
                 try:
                     async for message in websocket:
                         data = json.loads(message)
+                        user_input = data.get("text")
+                        audio_input = data.get("audio")
+                        if user_input:
+                            print("Client sent text:", user_input)
+                            await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
+                            print("Client sent text to Gemini.")
 
-                        if "text" in data:
-                            print("Client sent text:", data["text"])
-                            await session.send_client_content(
-                                turns={"role": "user", "parts": [{"text": data["text"]}]},
-                                turn_complete=True
-                            )
-
-                        elif "audio" in data:
-                            print("Client sent audio:", data["audio"])
-                            audio_bytes = base64.b64decode(data["audio"])
+                        elif audio_input:
+                            print("Client sent audio:", audio_input)
+                            audio_bytes = base64.b64decode(audio_input)
                             await session.send_realtime_input(
                                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
                             )
+                            print("Client sent audio to Gemini.")
 
                         elif data.get("action") == "audio_input_ended": # New condition
                             print("Client signaled end of audio input for the turn.")
                             await session.send_realtime_input(audio_stream_end=True)
+                            print("Client signaled end of audio input for the turn to Gemini.")
 
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("Client connection closed.")
