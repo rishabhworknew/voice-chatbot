@@ -1,52 +1,89 @@
-async def call_places_api(text_query: str):
-    """Calls the Google Places API to find places."""
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': PLACES_API_KEY,
-        'X-Goog-FieldMask': 'places.displayName,places.formattedAddress',
-    }
-    data = {
-        'textQuery': text_query,
-        'maxResultCount': 5
-    }
-    url = 'https://places.googleapis.com/v1/places:searchText'
+import asyncio
+import websockets
+import json
+from dotenv import load_dotenv
+import os
+from google import genai
+from google.genai import types
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+API_KEY = os.getenv("GOOGLE_API_KEY")
+PLACES_API_KEY = os.getenv("PLACES_API_KEY")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
+if not API_KEY:
+    raise RuntimeError("GOOGLE_API_KEY is missing!")
+
+client = genai.Client(api_key=API_KEY)
+model_id = "gemini-2.0-flash-live-001"
+
+async def handle_websocket(websocket):
+
+    SYSTEM_PROMPT = """
+You are a versatile and friendly AI assistant."""
+    
     try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: requests.post(url, json=data, headers=headers))
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logger.error(f"Error calling Places API: {e}")
-        # Return a structured error that can be sent back to Gemini
-        return {"error": f"Failed to connect to Places API: {str(e)}"}
+        config = types.LiveConnectConfig(
+            response_modalities=[types.Modality.TEXT],
+            system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
+        )
 
-search_places = {
-    "name": "search_places",
-    "description": "Searches for places like restaurants, cafes, or landmarks based on a text query.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "textQuery": {
-                "type": "string",
-                "description": "The search query from the user, for example: 'italian restaurants in dubai' or 'cafes near dubai mall'."
-            }
-        },
-        "required": ["textQuery"]
-    }
-}
+        async with client.aio.live.connect(model=model_id, config=config) as session:
+            # TASK 1: Receive from Gemini and send to Client
+            async def gemini_to_client():
+                try:
+                    async for gemini_message in session.receive():
+                        if gemini_message.text:
+                            await websocket.send(json.dumps({
+                                "type": "chunk", "response_chunk": gemini_message.text
+                            }))
+                            print("Gemini sent text:", gemini_message.text)
 
-search_places = {
-    "name": "search_places",
-    "description": "Searches for places like restaurants, cafes, or landmarks based on a text query.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "textQuery": {
-                "type": "string",
-                "description": "The search query from the user, for example: 'italian restaurants in dubai' or 'cafes near dubai mall'."
-            }
-        },
-        "required": ["textQuery"]
-    }
-}
+                        if gemini_message.server_content and gemini_message.server_content.turn_complete:
+                            await websocket.send(json.dumps({"type": "final"}))
+                            print("Gemini turn complete.")
+
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("Connection closed while streaming from Gemini.")
+                except Exception as e:
+                    logger.error(f"Error in gemini_to_client task: {e}")
+                    await websocket.send(json.dumps({"error": str(e)}))
+
+            # TASK 2: Receive from Client and send to Gemini
+            async def client_to_gemini():
+                try:
+                    async for message in websocket:
+                        data = json.loads(message)
+                        user_input = data.get("text")
+                        if user_input:
+                            print("Client sent text:", user_input)
+                            await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
+                            print("Client sent text to Gemini.")
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("Client connection closed.")
+                except Exception as e:
+                    logger.error(f"Error in client_to_gemini task: {e}")
+                    await websocket.send(json.dumps({"error": str(e)}))
+
+            await asyncio.gather(gemini_to_client(), client_to_gemini())
+    
+            print("Session ended.")
+
+    except Exception as e:
+        logger.error(f"Overall websocket error: {e}")
+        try:
+            await websocket.send(json.dumps({"error": str(e)}))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
+async def main():
+    async with websockets.serve(handle_websocket, "0.0.0.0", 8765):
+        print("WebSocket server started on ws://0.0.0.0:8765")
+        await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())
