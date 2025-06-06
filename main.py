@@ -92,71 +92,73 @@ You are a versatile and friendly AI assistant."""
             response_modalities=[types.Modality.TEXT],
             input_audio_transcription={},
             system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
-            # tools=[tools]
+            tools=[tools]
         )
 
         async with client.aio.live.connect(model=model_id, config=config) as session:
             # TASK 1: Receive from Gemini and send to Client
             async def gemini_to_client():
                 try:
-                    async for gemini_message in session.receive():
-                        if gemini_message.text:
-                            await websocket.send(json.dumps({
-                                "type": "chunk", "response_chunk": gemini_message.text, "session_id": session_id
-                            }))
+                    while True:
+                        async for gemini_message in session.receive():
+                            if gemini_message.text:
+                                await websocket.send(json.dumps({
+                                    "type": "chunk", "response_chunk": gemini_message.text, "session_id": session_id
+                                }))
                             print("Gemini sent text:", gemini_message.text)
 
-                        if gemini_message.server_content and gemini_message.server_content.input_transcription:
-                            await websocket.send(json.dumps({
-                                "type": "chunk", "transcription_chunk": gemini_message.server_content.input_transcription.text, "session_id": session_id
-                            }))
-                            print("Gemini sent transcription:", gemini_message.server_content.input_transcription.text)
+                            if gemini_message.server_content and gemini_message.server_content.input_transcription:
+                                await websocket.send(json.dumps({
+                                    "type": "chunk", "transcription_chunk": gemini_message.server_content.input_transcription.text, "session_id": session_id
+                                }))
+                                print("Gemini sent transcription:", gemini_message.server_content.input_transcription.text)
 
-                        if gemini_message.tool_call:
-                            function_responses = []
-                            for fc in gemini_message.tool_call.function_calls:
-                                try:
-                                    if fc.name == "process_ride_details":
-                                        params = fc.args
-                                        state.update(params)
-                                        try:
-                                            if state.get("startDate"): datetime.strptime(state["startDate"], "%d-%m-%Y")
-                                            if state.get("startTime"): datetime.strptime(state["startTime"], "%I:%M %p")
-                                        except ValueError as e:
-                                            logger.error(f"Invalid state format: {str(e)}")
-                                            function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"error": f"Invalid date/time format: {str(e)}"}))
-                                            continue
+                            if gemini_message.tool_call:
+                                function_responses = []
+                                for fc in gemini_message.tool_call.function_calls:
+                                    try:
+                                        if fc.name == "process_ride_details":
+                                            params = fc.args
+                                            state.update(params)
+                                            try:
+                                                if state.get("startDate"): datetime.strptime(state["startDate"], "%d-%m-%Y")
+                                                if state.get("startTime"): datetime.strptime(state["startTime"], "%I:%M %p")
+                                            except ValueError as e:
+                                                logger.error(f"Invalid state format: {str(e)}")
+                                                function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"error": f"Invalid date/time format: {str(e)}"}))
+                                                continue
 
-                                        n8n_payload = {"message": gemini_message.text or "", "session_id": session_id, "state": state, "headers": {"authorization": data.get("authorization", "")}}
-                                        n8n_response = await call_n8n_webhook(n8n_payload)
-                                        if "state" in n8n_response:
-                                            state.update(n8n_response["state"])
+                                            n8n_payload = {"message": gemini_message.text or "", "session_id": session_id, "state": state, "headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_response = await call_n8n_webhook(n8n_payload)
+                                            if "state" in n8n_response:
+                                                state.update(n8n_response["state"])
 
-                                        function_responses.append(types.FunctionResponse(
-                                            id=fc.id,
-                                            name=fc.name,
-                                            response=n8n_response
-                                        ))
-                                    elif fc.name == "book_ride":
-                                        params = fc.args
-                                        state.update(params)
-                                        n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": data.get("authorization", "")}}
-                                        n8n_response = await call_n8n_webhook(n8n_payload)
+                                                function_responses.append(types.FunctionResponse(
+                                                    id=fc.id,
+                                                    name=fc.name,
+                                                    response=n8n_response
+                                                ))
+                                        elif fc.name == "book_ride":
+                                            params = fc.args
+                                            state.update(params)
+                                            n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": data.get("authorization", "")}}
+                                            n8n_response = await call_n8n_webhook(n8n_payload)
 
-                                        function_responses.append(types.FunctionResponse(
-                                            id=fc.id,
-                                            name=fc.name,
-                                            response=n8n_response
-                                        ))
-                                except Exception as e:
-                                    logger.error(f"Error processing function call '{fc.name}': {str(e)}")
-                                    function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"error": str(e)}))
+                                            function_responses.append(types.FunctionResponse(
+                                                id=fc.id,
+                                                name=fc.name,
+                                                response=n8n_response
+                                            ))
+                                    except Exception as e:
+                                        logger.error(f"Error processing function call '{fc.name}': {str(e)}")
+                                        function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"error": str(e)}))
 
-                            await session.send_tool_response(function_responses=function_responses)
+                                await session.send_tool_response(function_responses=function_responses)
 
-                        if gemini_message.server_content and gemini_message.server_content.turn_complete:
-                            await websocket.send(json.dumps({"type": "final", "session_id": session_id}))
-                            print("Gemini turn complete.")
+                            if gemini_message.server_content and gemini_message.server_content.turn_complete:
+                                await websocket.send(json.dumps({"type": "final", "session_id": session_id}))
+                                print("Gemini turn complete.")
+                                break
 
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("Connection closed while streaming from Gemini.")

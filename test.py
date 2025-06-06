@@ -40,19 +40,20 @@ You are a versatile and friendly AI assistant."""
                         print("Client sent text:", user_input)
                         await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
                         print("Client sent text to Gemini.")
-                        
             # TASK 2: Receive from Gemini and send to Client
             async def gemini_to_client():
-                async for gemini_message in session.receive():
-                    if gemini_message.text:
-                        await websocket.send(json.dumps({
-                            "type": "chunk", "response_chunk": gemini_message.text
-                        }))
-                        print("Gemini sent text:", gemini_message.text)
+                while True:
+                    async for gemini_message in session.receive():
+                        if gemini_message.text:
+                            await websocket.send(json.dumps({
+                                "type": "chunk", "response_chunk": gemini_message.text
+                            }))
+                            print("Gemini sent text:", gemini_message.text)
 
-                    if gemini_message.server_content and gemini_message.server_content.turn_complete:
-                        await websocket.send(json.dumps({"type": "final"}))
-                        print("Gemini turn complete.")           
+                        if gemini_message.server_content and gemini_message.server_content.turn_complete:
+                            await websocket.send(json.dumps({"type": "final"}))
+                            print("Gemini turn complete.")
+                            break
 
             await asyncio.gather(gemini_to_client(), client_to_gemini())
     
