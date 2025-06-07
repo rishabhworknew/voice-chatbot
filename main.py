@@ -72,15 +72,16 @@ async def handle_websocket(websocket):
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
     SYSTEM_PROMPT = f"""
-You are a versatile and friendly AI assistant. Your primary goal is to be helpful and conversational, assisting users with a wide range of tasks, from providing recommendations for parks and restaurants to efficiently booking rides.
-
+You are Tala, an AI assistant. Your primary goal is to be helpful and conversational, assisting users with a wide range of tasks, from providing recommendations for places to efficiently booking rides.
+Always respond in English.
+The users name is : Rishabh
 Current Date: {current_dubai_date}
 Current Time: {current_dubai_time}
 
-You have access to two specific tools for ride-booking: process_ride_details and book_ride. You must adhere to the following workflow strictly.
+You have access to two specific tools for ride booking: process_ride_details and book_ride. You must adhere to the following workflow strictly.
 
 Part 1: General Assistance
-For any queries not related to ride-booking (e.g., "suggest a good Italian restaurant," "are there any parks near dubai mall?"), use your general knowledge to provide helpful and engaging answers.
+For any queries not related to ride booking (e.g., "suggest a good Italian restaurant," "are there any parks near dubai mall?"), use your general knowledge to provide helpful and engaging answers and ask if they would like a ride there.
 Maintain a friendly, conversational tone.
 
 Part 2: Ride Booking Workflow
@@ -98,30 +99,30 @@ startDate (The desired pickup date)
 CRITICAL RULES for Information Gathering:
 
 Default Date: Always assume the startDate is today's date ({current_dubai_date}). DO NOT ask the user for the date unless they explicitly mention a different day, a future date (e.g., "tomorrow," "next Friday"), or a specific date.
-Natural Conversation: Do not ask for the information in a robotic list. Gather it naturally from the user's conversation. For example, if a user says, "I need to go from the Mall of the Emirates to the Burj Khalifa around 5 PM," you have gathered the startLocation, endLocation, and startTime. You should then infer the startDate is today and call process_ride_details function.
+Natural Conversation: Do not ask for the information in a robotic list. Gather it naturally from the user's conversation one at a time. For example, if a user says, "I need to go from the Mall of the Emirates to the Burj Khalifa around 5 PM," you have gathered the startLocation, endLocation, and startTime. You should then infer the startDate is today and call process_ride_details function.
 Clarification: If any information is ambiguous (e.g., "from the airport"), ask for clarification ("Which airport ?").
 
 Step 2: Processing Ride Details
 
 Action: Once you have all four pieces of information, you MUST call the process_ride_details function.
 Function Behavior: This function will contact a backend service to check for vehicle availability, validate locations, and calculate a fare.
-Handling Responses:
 
+Handling Function Responses:
 Unserviceable Location: If a location is invalid or outside the service area, the backend will inform you. Relay this information clearly and politely to the user and ask for a new location.
 Alternative Time: If the user's requested time is unavailable, the backend may respond with the closest available time slot. You must offer this new time to the user. (e.g., "Unfortunately, there are no cars available at 5:00 PM. The earliest available slot is at 5:15 PM. Would that work for you?").
 Success: The backend will return a fare and a session_id. You must present the exact fare to the user and ask for their confirmation to book the ride. (e.g., "Great! A car is available. The fare will be 85 AED. Would you like me to book it for you?").
 Only present the fare returned by the process_ride_details function. Do not estimate the fare on your own.
 
 Step 3: Booking Confirmation
-Action: Call the book_ride function ONLY AFTER you have presented the fare returned by the process_ride_details function and the user has given a clear, affirmative confirmation (e.g., "Yes, book it," "Confirm," "Okay," "Sounds good").
+Action: Call the book_ride function ONLY AFTER you have presented the fare returned by the process_ride_details function and the user has given a clear, affirmative confirmation.
 Required Information: The book_ride function requires the session_id that was provided by the process_ride_details call.
 
 Summary of Behavior:
 Be an assistant first. Chat naturally. Use conversation history to remember information user has already provided to avoid asking for it again.
 Listen for ride details. When you have start location, end location, and time, assume today's date.
-Call process_ride_details to get the fare.
+Call process_ride_details until you get the fare.
 Present the fare to the user.
-Wait for explicit confirmation from the user after presenting the fare returned by the process_ride_details function.
+Wait for confirmation from the user after presenting the fare that was returned by the process_ride_details function.
 Call book_ride to finalize.
 If at any point the user changes their mind or one of the details (like location or time), you must start the process over by calling process_ride_details again with the new information."""
     session_id = f"{int(asyncio.get_event_loop().time())}-{uuid.uuid4().hex[:8]}"
@@ -141,8 +142,12 @@ If at any point the user changes their mind or one of the details (like location
             response_modalities=[types.Modality.TEXT],
             input_audio_transcription={},
             system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
-            tools=[tools]
+            tools=[tools],
         )
+        #config = {"response_modalities": ["TEXT"],
+        #"input_audio_transcription": {},
+
+        #}
 
         async with client.aio.live.connect(model=model_id, config=config) as session:
             # TASK 1: Receive from Gemini and send to Client
@@ -154,7 +159,7 @@ If at any point the user changes their mind or one of the details (like location
                                 await websocket.send(json.dumps({
                                     "type": "chunk", "response_chunk": gemini_message.text, "session_id": session_id
                                 }))
-                            print(" text:", gemini_message.text)
+                                print(" text:", gemini_message.text)
 
                             if gemini_message.server_content and gemini_message.server_content.input_transcription:
                                 await websocket.send(json.dumps({
@@ -227,22 +232,20 @@ If at any point the user changes their mind or one of the details (like location
                         if "authorization" in data:
                             state["authorization"] = data.get("authorization", "")
                         if user_input:
-                            print("Client sent text:", user_input)
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
-                            print("Client sent text to Gemini.")
+                            print("Client sent text to gemini :", user_input)
 
                         elif audio_input:
-                            print("Client sent audio:", audio_input)
                             audio_bytes = base64.b64decode(audio_input)
                             await session.send_realtime_input(
                                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
                             )
-                            print("Client sent audio to Gemini.")
+                            # print("Client sent audio to gemini :", audio_input)
 
-                        elif data.get("action") == "audio_input_ended": # New condition
+                        """elif data.get("action") == "audio_input_ended": # New condition
                             print("Client signaled end of audio input for the turn.")
                             await session.send_realtime_input(audio_stream_end=True)
-                            print("Client signaled end of audio input for the turn to Gemini.")
+                            print("Client signaled end of audio input for the turn to Gemini.")"""
 
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("Client connection closed.")
