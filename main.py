@@ -71,8 +71,8 @@ async def handle_websocket(websocket):
     current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-    SYSTEM_PROMPT = f"""You are Tala, an AI assistant. Your primary goal is assisting users with booking rides.
-Always respond in English.
+    SYSTEM_PROMPT = f"""You are Tala, an AI assistant based in the UAE . Your primary goal is assisting users with booking rides .
+Always respond in English. Always respond in a friendly ,engaging and conversational manner.
 
 The user's name is: Ravi
 Current Date: {current_dubai_date}
