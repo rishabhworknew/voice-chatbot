@@ -30,7 +30,7 @@ model_id = "gemini-2.0-flash-live-001"
 
 get_fare_details = {
     "name": "get_fare_details",
-    "description": "Processes ride booking details to fetch service availability / fare / time slots. To be called immediately after collecting start location, end location, start time, date.",
+    "description": "Processes ride booking details to fetch service availability / fare / time slots. To be called after collecting start location, end location, start time, date.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -46,7 +46,7 @@ get_fare_details = {
 
 book_ride = {
     "name": "book_ride",
-    "description": "Books a ride with the provided details. Only call this function when the user confirms to book the ride after being presented with the fare.",
+    "description": "Books a ride with the provided details. Only call this function when the user confirms to book the ride after being presented with the fare returned by get_fare_details.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -71,17 +71,13 @@ async def handle_websocket(websocket):
     current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-    SYSTEM_PROMPT = f"""You are Tala, an AI assistant. Your primary goal is assisting users with a wide range of tasks, from providing place recommendations to efficiently booking rides.
+    SYSTEM_PROMPT = f"""You are Tala, an AI assistant. Your primary goal is assisting users with booking rides.
 Always respond in English.
 
-The user's name is: Rishabh
+The user's name is: Ravi
 Current Date: {current_dubai_date}
 Current Time: {current_dubai_time}
 
-For any queries not related to ride booking (e.g., "suggest a good Italian restaurant," "are there any parks near dubai mall?"), use your general knowledge to provide helpful and engaging answers and ask if they would like a ride there.
-Maintain a friendly, conversational tone.
-
----
 ### RIDE BOOKING WORKFLOW ---
 
 This is a strict, multi-step process. Follow these rules precisely.
@@ -113,7 +109,7 @@ Your first task is to collect these four pieces of information:
 
 **Handling Function Responses:**
 
-* **Success:** If the function returns a fare (e.g., 85 AED), your response MUST be: "Great! A car is available. The fare will be [Fare from function] AED. Would you like me to book it for you?"
+* **Success:** If the function returns a fare, present it to the user and ask for confirmation. 
 * **Unserviceable Location:** If a location is invalid, relay this to the user and ask for a corrected location. Then, you must call the `get_fare_details` function again with the new information.
 * **Alternative Time:** If your time is unavailable but the function returns a new time, your response MUST be: "Unfortunately, there are no cars available at that time. The earliest available slot is at [New Time from function]. Would that work for you?"
 
@@ -145,13 +141,13 @@ Your first task is to collect these four pieces of information:
             response_modalities=[types.Modality.TEXT],
             input_audio_transcription={},
             system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
-            tools=[tools],
+            tools=[tools]
         )
         
 
         async with client.aio.live.connect(model=model_id, config=config) as session:
             # TASK 1: Receive from Gemini and send to Client
-            async def gemini_to_client():
+            async def gemini_to_client(): 
                 try:
                     while True:
                         async for gemini_message in session.receive():
@@ -186,14 +182,18 @@ Your first task is to collect these four pieces of information:
 
                                             n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
+                                            fare = n8n_response.get("fare")
+                                            if fare:
+                                                print(" Fare returned by n8n:", fare)
+                                                state["fare"] = fare  
                                             if "state" in n8n_response:
                                                 state.update(n8n_response["state"])
-
-                                                function_responses.append(types.FunctionResponse(
-                                                    id=fc.id,
-                                                    name=fc.name,
-                                                    response=n8n_response
-                                                ))
+                                            print(" n8n_response:", n8n_response)
+                                            function_responses.append(types.FunctionResponse(
+                                                id=fc.id,
+                                                name=fc.name,
+                                                response=n8n_response
+                                            ))
                                         elif fc.name == "book_ride":
                                             params = fc.args
                                             state.update(params)
