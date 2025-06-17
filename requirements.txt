@@ -1,6 +1,6 @@
-websockets==12.0
-requests==2.32.3
-python-dotenv==1.0.1
+websockets
+requests
+python-dotenv
 google-genai
-soundfile==0.12.1
-pytz==2024.2
+soundfile
+pytz
