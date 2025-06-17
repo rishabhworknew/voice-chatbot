@@ -11,7 +11,6 @@ from google.genai.types import Tool
 import uuid
 import logging
 import base64
-import soundfile as sf
 import pytz
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +20,7 @@ load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 PLACES_API_KEY = os.getenv("PLACES_API_KEY")
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://localhost:5678/webhook/chatbot")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 if not API_KEY:
     raise RuntimeError("GOOGLE_API_KEY is missing!")
 
@@ -71,12 +70,13 @@ async def handle_websocket(websocket):
     current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-    SYSTEM_PROMPT = f"""You are Tala, an AI assistant based in the UAE . Your primary goal is assisting users with booking rides .
-Always respond in English. Always respond in a friendly ,engaging and conversational manner.
+    SYSTEM_PROMPT = f"""You are Tala, an AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
+Always respond in English and in a friendly ,engaging and conversational manner.
+Do not repeat the same information multiple times. 
 
-The user's name is: Ravi
-Current Date: {current_dubai_date}
-Current Time: {current_dubai_time}
+The user's name is: Rishabh
+Current Date: {current_dubai_date} , DD-MM-YYYY format
+Current Time: {current_dubai_time} , H:MM AM/PM format
 
 ### RIDE BOOKING WORKFLOW ---
 
