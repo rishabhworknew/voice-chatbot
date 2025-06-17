@@ -5,9 +5,9 @@ import requests
 from dotenv import load_dotenv
 import os
 from datetime import datetime
-from google import genai
-from google.genai import types
-from google.genai.types import Tool
+import google.generativeai as genai
+from google.generativeai import types
+from google.generativeai.types import Tool
 import uuid
 import logging
 import base64
