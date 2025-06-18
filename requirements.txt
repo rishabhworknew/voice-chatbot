@@ -4,3 +4,4 @@ python-dotenv
 google-genai
 pytz
 google-generativeai
+

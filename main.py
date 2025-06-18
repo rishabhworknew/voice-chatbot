@@ -12,6 +12,7 @@ import uuid
 import logging
 import base64
 import pytz
+import httpx
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,9 +60,10 @@ book_ride = {
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
     headers = {"Content-Type": "application/json"}
-    response = requests.post(N8N_WEBHOOK_URL, json=data, headers=headers)
-    response.raise_for_status()
-    return response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.post(N8N_WEBHOOK_URL, json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
 async def handle_websocket(websocket):
     dubai_tz = pytz.timezone("Asia/Dubai")
