@@ -2,6 +2,5 @@ websockets
 requests
 python-dotenv
 google-genai
-soundfile
 pytz
-gunicorn
+google-generativeai
