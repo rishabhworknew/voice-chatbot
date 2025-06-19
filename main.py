@@ -1,7 +1,6 @@
 import asyncio
 import websockets
 import json
-import requests
 from dotenv import load_dotenv
 import os
 from datetime import datetime
@@ -51,9 +50,9 @@ book_ride = {
         "type": "object",
         "properties": {
             "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
-            "session_id": {"type": "string", "description": "The session id, fetched after the fare is calculated."},
+            "fare": {"type": "string", "description": "The fare of the ride returned by get_fare_details."},
         },
-        "required": ["rideConfirmation", "session_id"]
+        "required": ["rideConfirmation", "fare"]
     }
 }
 
@@ -65,6 +64,26 @@ async def call_n8n_webhook(data):
         response.raise_for_status()
         return response.json()
 
+async def reverse_geocode(lat, lon):
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "latlng": f"{lat},{lon}",
+        "key": PLACES_API_KEY
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            if data["status"] == "OK" and data["results"]:
+                return data["results"][0]["formatted_address"]
+            else:
+                logger.warning(f"Google returned no results: {data}")
+                return "Unknown location"
+        else:
+            logger.warning(f"Geocoding failed with HTTP {response.status_code}")
+            return "Unknown location"
+
 async def handle_websocket(websocket):
     dubai_tz = pytz.timezone("Asia/Dubai")
     now_in_dubai = datetime.now(dubai_tz)
@@ -72,11 +91,52 @@ async def handle_websocket(websocket):
     current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-    SYSTEM_PROMPT = f"""You are Tala, an AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
-Always respond in English and in a friendly ,engaging and conversational manner.
-Do not repeat the same information multiple times. 
+    
 
-The user's name is: Rishabh
+    session_id = f"{int(asyncio.get_event_loop().time())}-{uuid.uuid4().hex[:8]}"
+    state = {
+        "startLocation": None,
+        "endLocation": None,
+        "startDate": None,
+        "startTime": None,
+        "rideConfirmation": False,
+        "authorization_token": None,
+    }
+    tools = types.Tool(function_declarations=[get_fare_details, book_ride])
+
+    logger.info("New client connection established.")
+    
+
+    try:
+        auth_message = await websocket.recv()
+        auth_data = json.loads(auth_message)
+
+        if auth_data.get("type") == "auth" and auth_data.get("token"):
+            state["authorization_token"] = auth_data["token"]
+            state["user_name"] = auth_data.get("name", "Unknown")
+            state["latitude"] = auth_data.get("latitude", "Unknown")
+            state["longitude"] = auth_data.get("longitude", "Unknown")
+            if state["latitude"] != "Unknown" and state["longitude"] != "Unknown":
+                state["address"] = await reverse_geocode(state["latitude"], state["longitude"])
+            else:
+                state["address"] = "Unknown location"
+            logger.info("########################")
+            logger.info(state)
+            logger.info("########################")
+            await websocket.send(json.dumps({"type": "auth_status", "status": "success", "session_id": session_id}))
+        else:
+            logger.warning("First message was not a valid authentication message. Closing connection.")
+            await websocket.send(json.dumps({"error": "Authentication required as first message.", "session_id": session_id}))
+            await websocket.close()
+            return             
+
+        SYSTEM_PROMPT = f"""You are Tala, an AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
+Always respond in English in a friendly ,engaging and conversational manner.
+Always ask for the required details one by one. 
+Clarify ambigous location details if required.
+
+User Name: {state.get("user_name", "Unknown")}
+User location: {state.get("address", "Unknown")}
 Current Date: {current_dubai_date} , DD-MM-YYYY format
 Current Time: {current_dubai_time} , H:MM AM/PM format
 
@@ -125,20 +185,6 @@ Your first task is to collect these four pieces of information:
 * **TRIGGER:** You can ONLY call the `book_ride` function AFTER you have presented the fare from `get_fare_details` and the user has given a clear, affirmative confirmation (e.g., "Yes," "Book it," "Confirm").
 * **ACTION:** Call the `book_ride` function.
 """
-
-    session_id = f"{int(asyncio.get_event_loop().time())}-{uuid.uuid4().hex[:8]}"
-    state = {
-        "startLocation": None,
-        "endLocation": None,
-        "startDate": None,
-        "startTime": None,
-        "rideConfirmation": False,
-    }
-    tools = types.Tool(function_declarations=[get_fare_details, book_ride])
-
-    logger.info("New client connection established.")
-
-    try:
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.TEXT],
             input_audio_transcription={},
@@ -182,7 +228,7 @@ Your first task is to collect these four pieces of information:
                                                 function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"error": f"Invalid date/time format: {str(e)}"}))
                                                 continue
 
-                                            n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization", "")}}
+                                            n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization_token", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
                                             fare = n8n_response.get("fare")
                                             if fare:
@@ -199,7 +245,7 @@ Your first task is to collect these four pieces of information:
                                         elif fc.name == "book_ride":
                                             params = fc.args
                                             state.update(params)
-                                            n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization", "")}}
+                                            n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization_token", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
 
                                             function_responses.append(types.FunctionResponse(
@@ -231,8 +277,6 @@ Your first task is to collect these four pieces of information:
                         data = json.loads(message)
                         user_input = data.get("text")
                         audio_input = data.get("audio")
-                        if "authorization" in data:
-                            state["authorization"] = data.get("authorization", "")
                         if user_input:
                             await session.send_client_content(turns={"role": "user", "parts": [{"text": user_input}]}, turn_complete=True)
                             print("Client sent text to gemini :", user_input)
