@@ -10,6 +10,7 @@ from google.genai.types import Tool
 import uuid
 import logging
 import base64
+import wave
 import pytz
 import httpx
 
@@ -91,7 +92,7 @@ async def handle_websocket(websocket):
     current_dubai_date = now_in_dubai.strftime("%d-%m-%Y")
     logger.info(f"Current Dubai time: {current_dubai_time}, date: {current_dubai_date}")
 
-    
+
 
     session_id = f"{int(asyncio.get_event_loop().time())}-{uuid.uuid4().hex[:8]}"
     state = {
@@ -105,7 +106,7 @@ async def handle_websocket(websocket):
     tools = types.Tool(function_declarations=[get_fare_details, book_ride])
 
     logger.info("New client connection established.")
-    
+
 
     try:
         auth_message = await websocket.recv()
@@ -117,7 +118,6 @@ async def handle_websocket(websocket):
             state["latitude"] = auth_data.get("latitude", "Unknown")
             state["longitude"] = auth_data.get("longitude", "Unknown")
             if state["latitude"] != "Unknown" and state["longitude"] != "Unknown":
-                # state["address"] = await reverse_geocode(state["latitude"], state["longitude"])
                 state["address"] = "Palm Jumeirah, Dubai"
             else:
                 state["address"] = "Unknown location"
@@ -129,85 +129,51 @@ async def handle_websocket(websocket):
             logger.warning("First message was not a valid authentication message. Closing connection.")
             await websocket.send(json.dumps({"error": "Authentication required as first message.", "session_id": session_id}))
             await websocket.close()
-            return             
+            return
 
-        SYSTEM_PROMPT = f"""You are Tala, a friendly and engaging AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
-For ride booking, always ask for the required details one by one conversationally. 
+        SYSTEM_PROMPT = f"""You are Tala, a friendly and engaging AI assistant based in the UAE .
 Suggest locations to the user based on the your knowledge of the UAE.
-Always respond in English . 
-Do not be annoying to the user.
-
-User Name: {state.get("user_name", "Unknown")}
-User location: {state.get("address", "Unknown")}
-Current UAE Date: {current_dubai_date} , DD-MM-YYYY format
-Current UAE Time: {current_dubai_time} , H:MM AM/PM format
-
-### RIDE BOOKING WORKFLOW ---
-
-This is a strict process. Follow these rules precisely.
-
-**THE GOLDEN RULES - NON-NEGOTIABLE**
-
-1.  **NEVER MAKE UP A FARE.** The ride fare is dynamic and unpredictable. The fare is completely unknown to you until the `get_fare_details` function returns it. Stating a fare you were not given by the function is a critical failure.
-2.  **ALWAYS USE YOUR TOOLS.** Your only job in ride booking is to collect information and then call the functions in the correct order. Do not try to complete the booking process on your own.
-
-**Step 1: Information Gathering**
-
-Your task is to collect these four pieces of information:
-* `startLocation` (Where the ride begins)
-* `endLocation` (Where the ride ends)
-* `startTime` (The desired pickup time)
-* `startDate` (The desired pickup date)
-
-**Critical Rules for Information Gathering:**
-
-* **Clarification:** If a location is ambiguous , ask for clarification .
-
-**Step 2: Processing Ride Details & Getting the Fare**
-
-* **TRIGGER:** As soon as you have the four pieces of information (`startLocation`, `endLocation`, `startTime`, `startDate`), you MUST immediately stop the conversation and call the `get_fare_details` function. This is your only next action.
-* **FUNCTION PURPOSE:** This function checks vehicle availability and calculates the official fare.
-
-**Handling Function Responses:**
-
-* **Success:** If the function returns a fare, present it to the user and ask for confirmation. 
-* **Unserviceable Location:** If a location is invalid, relay this to the user and ask for a corrected location. Then, you must call the `get_fare_details` function again with the new information.
-* **Alternative Time:** If your time is unavailable , the function returns the closest available times, relay this to the user and ask for a new time. Then, you must call the `get_fare_details` function again with the new information.
-
-**Critical Rules for Processing:**
-
-* **Always Call the Function:** Call `get_fare_details` every time you have the four required details, even if the user changes just one piece of information (like the time or location).
-* **The Function is the Only Source of Truth:** Only present the exact fare returned by this function.
-
-**Step 3: Booking Confirmation**
-
-* **TRIGGER:** You can ONLY call the `book_ride` function AFTER you have presented the fare from `get_fare_details` and the user has given a clear, affirmative confirmation (e.g., "Yes," "Book it," "Confirm").
+Always respond in English .
 """
         config = types.LiveConnectConfig(
-            response_modalities=[types.Modality.TEXT],
+            response_modalities=[types.Modality.AUDIO],
             input_audio_transcription={},
+            output_audio_transcription={},
             system_instruction=types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
-            tools=[tools]
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="Kore"
+                    )
+                )
+            ),
+            tools=[tools]  # make sure this is a list of tool objects
         )
-        
+
+
 
         async with client.aio.live.connect(model=model_id, config=config) as session:
-            # TASK 1: Receive from Gemini and send to Client
-            async def gemini_to_client(): 
+            async def gemini_to_client():
                 try:
                     while True:
                         async for gemini_message in session.receive():
-                            if gemini_message.text:
+                            if gemini_message.data is not None:
+                                pcm_data = base64.b64decode(gemini_message.data)
+                                audio_chunk_b64 = base64.b64encode(pcm_data).decode('utf-8')
                                 await websocket.send(json.dumps({
-                                    "type": "chunk", "response_chunk": gemini_message.text, "session_id": session_id
+                                    "type": "audio_chunk", "audio_chunk": audio_chunk_b64, "session_id": session_id
                                 }))
-                                print(" text:", gemini_message.text)
 
                             if gemini_message.server_content and gemini_message.server_content.input_transcription:
                                 await websocket.send(json.dumps({
                                     "type": "chunk", "transcription_chunk": gemini_message.server_content.input_transcription.text, "session_id": session_id
                                 }))
                                 print(" transcription:", gemini_message.server_content.input_transcription.text)
+                            if gemini_message.server_content and gemini_message.server_content.output_transcription:
+                                await websocket.send(json.dumps({
+                                    "type": "chunk", "response_chunk": gemini_message.server_content.output_transcription.text, "session_id": session_id
+                                }))
+                                print(" response:", gemini_message.server_content.output_transcription.text)
 
                             if gemini_message.tool_call:
                                 print(" tool call:", gemini_message.tool_call)
@@ -231,7 +197,7 @@ Your task is to collect these four pieces of information:
                                             fare = n8n_response.get("fare")
                                             if fare:
                                                 print(" Fare returned by n8n:", fare)
-                                                state["fare"] = fare  
+                                                state["fare"] = fare
                                             if "state" in n8n_response:
                                                 state.update(n8n_response["state"])
                                             print(" n8n_response:", n8n_response)
@@ -268,6 +234,7 @@ Your task is to collect these four pieces of information:
                     logger.error(f"Error in gemini_to_client task: {e}")
                     await websocket.send(json.dumps({"error": str(e), "session_id": session_id}))
 
+
             # TASK 2: Receive from Client and send to Gemini
             async def client_to_gemini():
                 try:
@@ -299,7 +266,7 @@ Your task is to collect these four pieces of information:
 
             # Run both tasks concurrently
             await asyncio.gather(gemini_to_client(), client_to_gemini())
-    
+
             print("Session ended.")
 
     except Exception as e:
@@ -316,3 +283,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+# streaming works 
