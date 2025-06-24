@@ -29,7 +29,7 @@ model_id = "gemini-2.0-flash-live-001"
 
 get_fare_details = {
     "name": "get_fare_details",
-    "description": "Processes ride booking details to fetch service availability / fare / time slots. To be called after collecting start location, end location, start time, date.",
+    "description": "Processes ride booking details to fetch service fare / time slots. .",
     "parameters": {
         "type": "object",
         "properties": {
@@ -131,12 +131,11 @@ async def handle_websocket(websocket):
             return
 
         SYSTEM_PROMPT = f"""You are Tala, a friendly and engaging AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
-For ride booking, always ask for the required details one by one conversationally. 
 Suggest location recommendations to the user based on the your knowledge of the UAE.
 Always respond in English . 
 
 User Name: {state.get("user_name", "Unknown")}
-User location: {state.get("address", "Unknown")}
+Current User location: {state.get("address", "Unknown")}
 Current UAE Date: {current_dubai_date} , DD-MM-YYYY format
 Current UAE Time: {current_dubai_time} , H:MM AM/PM format
 
@@ -159,8 +158,9 @@ Your task is to collect these four pieces of information:
 
 **Critical Rules for Information Gathering:**
 
-* **The location must be in the UAE and must be a valid name.
-* **Clarification:** If a location is ambiguous , ask for clarification .
+* **The location must be in the UAE and must be a valid location name. If a location is ambiguous , ask for clarification .
+* **For ride booking, always ask for the required details one by one in a natural conversational flow. 
+
 
 **Step 2: Processing Ride Details & Getting the Fare**
 
@@ -194,7 +194,7 @@ Your task is to collect these four pieces of information:
                     )
                 )
             ),
-            tools=[tools]  # make sure this is a list of tool objects
+            tools=[tools] 
         )
 
 
@@ -202,6 +202,7 @@ Your task is to collect these four pieces of information:
         async with client.aio.live.connect(model=model_id, config=config) as session:
             async def gemini_to_client():
                 try:
+                    booking_confirmed = False
                     while True:
                         async for gemini_message in session.receive():
                             if gemini_message.data is not None:
@@ -258,6 +259,8 @@ Your task is to collect these four pieces of information:
                                             state.update(params)
                                             n8n_payload = {"session_id": session_id, "state": state, "headers": {"authorization": state.get("authorization_token", "")}}
                                             n8n_response = await call_n8n_webhook(n8n_payload)
+                                            if n8n_response.get("status") == "BOOKING_CONFIRMED":
+                                                booking_confirmed = True
 
                                             function_responses.append(types.FunctionResponse(
                                                 id=fc.id,
@@ -273,6 +276,14 @@ Your task is to collect these four pieces of information:
                             if gemini_message.server_content and gemini_message.server_content.turn_complete:
                                 await websocket.send(json.dumps({"type": "final", "session_id": session_id}))
                                 print("Gemini turn complete.")
+                                if booking_confirmed:
+                                    try:
+                                        await websocket.send(json.dumps({
+                                            "type": "confirm"
+                                        }))
+                                    except websockets.exceptions.ConnectionClosed:
+                                        logger.info("WebSocket closed before sending booking confirmation.")
+                                    booking_confirmed = False
                                 break
 
                 except websockets.exceptions.ConnectionClosed:
@@ -301,7 +312,6 @@ Your task is to collect these four pieces of information:
                             # print("Client sent audio to gemini :", audio_input)
 
                         """elif data.get("action") == "audio_input_ended": # New condition
-                            print("Client signaled end of audio input for the turn.")
                             await session.send_realtime_input(audio_stream_end=True)
                             print("Client signaled end of audio input for the turn to Gemini.")"""
 
