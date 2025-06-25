@@ -351,13 +351,13 @@ async def run_health_check_server():
 
 
 async def main():
-    websocket_port = int(os.getenv("PORT", 10000))
+    websocket_port = int(os.getenv("PORT", 8080))
     # Run both the WebSocket server and the HTTP health check server concurrently
     await asyncio.gather(
-        websockets.serve(handle_websocket, "0.0.0.0", websocket_port,ws),
+        websockets.serve(handle_websocket, "0.0.0.0", websocket_port),
         run_health_check_server()
     )
-    print(f"WebSocket server started on ws://0.0.0.0:{websocket_port}/ws")
+    print(f"WebSocket server started on ws://0.0.0.0:{websocket_port}")
     await asyncio.Future()
 
 if __name__ == "__main__":
