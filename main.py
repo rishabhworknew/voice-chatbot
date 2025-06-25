@@ -1,24 +1,42 @@
 import asyncio
-import websockets
 import os
+from aiohttp import web
+import aiohttp
+import websockets
 
-# WebSocket handler that echoes messages
-async def echo(websocket, path):
+# WebSocket handler for echoing messages
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
     try:
-        async for message in websocket:
-            print(f"Received: {message}")
-            await websocket.send(f"Echo: {message}")
-    except websockets.exceptions.ConnectionClosed:
-        print("Client disconnected")
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                print(f"Received: {msg.data}")
+                await ws.send_str(f"Echo: {msg.data}")
+            elif msg.type == aiohttp.WSMsgType.CLOSED:
+                print("Client disconnected")
+                break
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        await ws.close()
 
-# Start the WebSocket server
-async def main():
-    # Get the port from the environment variable (Render sets this)
-    port = int(os.getenv("PORT", 8000))
-    # Start the server, binding to 0.0.0.0 for Render
-    server = await websockets.serve(echo, "0.0.0.0", port)
-    print(f"WebSocket server started on port {port}")
-    await server.wait_closed()
+    return ws
 
+# HTTP handler for health checks (HEAD requests)
+async def health_check(request):
+    if request.method == "HEAD" or request.method == "GET":
+        return web.Response(status=200, text="OK")
+    return web.Response(status=405, text="Method Not Allowed")
+
+# Create the aiohttp application
+app = web.Application()
+app.add_routes([web.get('/ws', websocket_handler),
+                 web.head('/', health_check),
+                 web.get('/', health_check)])
+
+# Start the server
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.getenv("PORT", 8000))
+    web.run_app(app, host="0.0.0.0", port=port)
