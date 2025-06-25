@@ -2,7 +2,6 @@ import asyncio
 import os
 from aiohttp import web
 import aiohttp
-import websockets
 
 # WebSocket handler for echoing messages
 async def websocket_handler(request):
@@ -24,17 +23,14 @@ async def websocket_handler(request):
 
     return ws
 
-# HTTP handler for health checks (HEAD requests)
+# HTTP handler for health checks (handles both GET and HEAD requests)
 async def health_check(request):
-    if request.method == "HEAD" or request.method == "GET":
-        return web.Response(status=200, text="OK")
-    return web.Response(status=405, text="Method Not Allowed")
+    return web.Response(status=200, text="OK")
 
 # Create the aiohttp application
 app = web.Application()
 app.add_routes([web.get('/ws', websocket_handler),
-                 web.head('/', health_check),
-                 web.get('/', health_check)])
+                web.get('/', health_check)])  # Single route for both GET and HEAD
 
 # Start the server
 if __name__ == "__main__":
