@@ -52,9 +52,9 @@ book_ride = {
         "properties": {
             "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
             "fare": {"type": "string", "description": "The fare of the ride returned by get_fare_details."},
-        "required": ["rideConfirmation", "required": ["confirmation", "fare"]
+        "required": ["rideConfirmation", "fare"]
 }
-}
+}}
 
 async def call_n8n_webhook(data):
     """Send structured output to n8n webhook"""
@@ -81,7 +81,7 @@ async def reverse_geocode(lat, lon):
                 logger.warning(f"Google returned no results: {data}")
                 return "Unknown location"
         else:
-            logger.warning("Failed: f"Geocoding failed with HTTP {response.status_code}")
+            logger.warning("Geocoding failed with HTTP {response.status_code}")
             return "Unknown location"
 
 # New: Health check handler for HTTP
