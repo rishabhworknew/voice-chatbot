@@ -12,6 +12,7 @@ import logging
 import base64
 import pytz
 import httpx
+from http.server import BaseHTTPRequestHandler, HTTPServer # For a simple HTTP server
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -327,12 +328,37 @@ Your task is to collect these four pieces of information one by one in a natural
         except websockets.exceptions.ConnectionClosed:
             pass
 
+# Simple HTTP handler for health checks
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_error(404)
+
+async def run_health_check_server():
+    health_port = int(os.getenv("HEALTH_CHECK_PORT", 8080)) # A different port for health checks
+    httpd = HTTPServer(("0.0.0.0", health_port), HealthCheckHandler)
+    logger.info(f"Health check server started on http://0.0.0.0:{health_port}")
+    await asyncio.to_thread(httpd.serve_forever)
+
+
 async def main():
-    port = int(os.getenv("PORT", 10000))  # Default to 10000 for local testing
-    async with websockets.serve(handle_websocket, "0.0.0.0", port):
-        print(f"WebSocket server started on ws://0.0.0.0:{port}")
-        await asyncio.Future()
+    websocket_port = int(os.getenv("PORT", 10000))
+    # Run both the WebSocket server and the HTTP health check server concurrently
+    await asyncio.gather(
+        websockets.serve(handle_websocket, "0.0.0.0", websocket_port),
+        run_health_check_server()
+    )
+    print(f"WebSocket server started on ws://0.0.0.0:{websocket_port}")
+    await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
-# streaming works 
