@@ -328,8 +328,9 @@ Your task is to collect these four pieces of information one by one in a natural
             pass
 
 async def main():
-    async with websockets.serve(handle_websocket, "0.0.0.0", 10000):
-        print("WebSocket server started on ws://0.0.0.0:10000")
+    port = int(os.getenv("PORT", 10000))  # Default to 10000 for local testing
+    async with websockets.serve(handle_websocket, "0.0.0.0", port):
+        print(f"WebSocket server started on ws://0.0.0.0:{port}")
         await asyncio.Future()
 
 if __name__ == "__main__":
