@@ -29,14 +29,14 @@ model_id = "gemini-2.0-flash-live-001"
 
 get_fare_details = {
     "name": "get_fare_details",
-    "description": "Processes ride booking details to fetch service fare / time slots. .",
+    "description": "Processes ride booking details to fetch service fare / time slots.All parameters to be send in english.",
     "parameters": {
         "type": "object",
         "properties": {
             "startLocation": {"type": "string", "description": "The starting location of the ride."},
             "endLocation": {"type": "string", "description": "The destination location of the ride."},
             "startDate": {"type": "string", "description": "The date of the ride in DD-MM-YYYY format."},
-            "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format."},
+            "startTime": {"type": "string", "description": "The time of the ride in H:MM AM/PM format, 12 hour format."},
             "rideConfirmation": {"type": "boolean", "description": "The confirmation of the ride."},
         },
         "required": ["startLocation", "endLocation", "startDate", "startTime"]
@@ -130,7 +130,7 @@ async def handle_websocket(websocket):
             await websocket.close()
             return
 
-        SYSTEM_PROMPT = f"""You are Tala, a friendly and engaging AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
+        SYSTEM_PROMPT = f"""You are Tala, an intelligent AI assistant based in the UAE . Your primary goal is assisting users with booking rides and location suggestions in the UAE .
 Suggest location recommendations to the user based on the your knowledge of the UAE.
 Always respond in English . 
 
@@ -139,28 +139,21 @@ Current User location: {state.get("address", "Unknown")}
 Current UAE Date: {current_dubai_date} , DD-MM-YYYY format
 Current UAE Time: {current_dubai_time} , H:MM AM/PM format
 
-### RIDE BOOKING WORKFLOW ---
-
-This is a strict process. Follow these rules precisely.
 
 **THE GOLDEN RULES - NON-NEGOTIABLE**
 
 1.  **NEVER MAKE UP A FARE.** The ride fare is dynamic and unpredictable. The fare is completely unknown to you until the `get_fare_details` function returns it. Stating a fare you were not given by the function is a critical failure.
 2.  **ALWAYS USE YOUR TOOLS.** Your only job in ride booking is to collect information and then call the functions in the correct order. Do not try to complete the booking process on your own.
 
+### RIDE BOOKING WORKFLOW ---
+
 **Step 1: Information Gathering**
 
-Your task is to collect these four pieces of information:
+Your task is to collect these four pieces of information one by one in a natural way adapting to the conversation:
 * `startLocation` (Where the ride begins)
 * `endLocation` (Where the ride ends)
 * `startTime` (The desired pickup time)
 * `startDate` (The desired pickup date)
-
-**Critical Rules for Information Gathering:**
-
-* **The location must be in the UAE and must be a valid location name. If a location is ambiguous , ask for clarification .
-* **For ride booking, always ask for the required details one by one in a natural conversational flow. 
-
 
 **Step 2: Processing Ride Details & Getting the Fare**
 
@@ -169,7 +162,7 @@ Your task is to collect these four pieces of information:
 
 **Handling Function Responses:**
 
-* **Success:** If the function returns a fare, present it to the user and ask for confirmation. 
+* **Success:** If the function returns a fare, present the fare to the user and ask for confirmation. 
 * **Unserviceable Location:** If a location is invalid, relay this to the user and ask for a corrected location. Then, you must call the `get_fare_details` function again with the new information.
 * **Alternative Time:** If your time is unavailable , the function returns the closest available times, relay this to the user and ask for a new time. Then, you must call the `get_fare_details` function again with the new information.
 
@@ -274,6 +267,7 @@ Your task is to collect these four pieces of information:
                                 await session.send_tool_response(function_responses=function_responses)
 
                             if gemini_message.server_content and gemini_message.server_content.turn_complete:
+                                await asyncio.sleep(0.5)
                                 await websocket.send(json.dumps({"type": "final", "session_id": session_id}))
                                 print("Gemini turn complete.")
                                 if booking_confirmed:
