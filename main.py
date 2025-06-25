@@ -341,7 +341,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"OK")
         else:
-            self.send_error(404)
+            self.send_error(201)
 
 async def run_health_check_server():
     health_port = int(os.getenv("HEALTH_CHECK_PORT", 8080)) # A different port for health checks
