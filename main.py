@@ -30,6 +30,7 @@ async def health_check(request):
 # Create the aiohttp application
 app = web.Application()
 app.add_routes([web.get('/ws', websocket_handler),
+                web.get('/', health_check),
                 web.get('/health', health_check)])  # Single route for both GET and HEAD
 
 # Start the server
