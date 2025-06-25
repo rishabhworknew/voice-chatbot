@@ -341,7 +341,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"OK")
         else:
-            self.send_error(201)
+            self.send_error(404)
 
 async def run_health_check_server():
     health_port = int(os.getenv("HEALTH_CHECK_PORT", 8080)) # A different port for health checks
@@ -354,10 +354,10 @@ async def main():
     websocket_port = int(os.getenv("PORT", 10000))
     # Run both the WebSocket server and the HTTP health check server concurrently
     await asyncio.gather(
-        websockets.serve(handle_websocket, "0.0.0.0", websocket_port),
+        websockets.serve(handle_websocket, "0.0.0.0", websocket_port,ws),
         run_health_check_server()
     )
-    print(f"WebSocket server started on ws://0.0.0.0:{websocket_port}")
+    print(f"WebSocket server started on ws://0.0.0.0:{websocket_port}/ws")
     await asyncio.Future()
 
 if __name__ == "__main__":
