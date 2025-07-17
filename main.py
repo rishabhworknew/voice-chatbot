@@ -17,6 +17,7 @@ from config import (
     call_n8n_webhook,
     reverse_geocode
 )
+import wave
 
 # --- Basic Setup ---
 logging.basicConfig(level=logging.INFO)
@@ -83,20 +84,26 @@ async def handle_websocket(websocket):
         # --- Gemini Configuration ---
         system_prompt_text = get_system_prompt(state, current_dubai_date, current_dubai_time)
         
-        config = types.LiveConnectConfig(
-            response_modalities=[types.Modality.AUDIO],
-            input_audio_transcription={},
-            output_audio_transcription={},
-            system_instruction=types.Content(parts=[types.Part(text=system_prompt_text)]),
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Kore"
-                    )
-                )
-            ),
-            tools=[tools]
-        )
+        config = {
+            "response_modalities": ["AUDIO"],
+            "speech_config": {
+                "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}}
+            },
+            "realtime_input_config": {
+                "automatic_activity_detection": {
+                    "disabled": False, # default
+                    "start_of_speech_sensitivity": types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    "end_of_speech_sensitivity": types.EndSensitivity.END_SENSITIVITY_HIGH,
+                    "prefix_padding_ms": 100,
+                    "silence_duration_ms": 100,
+                }
+            },
+            "tools": [tools],
+            "input_audio_transcription": {},
+            "output_audio_transcription": {},
+            "system_instruction": types.Content(parts=[types.Part(text=system_prompt_text)]),
+        }
+
 
         # --- Main Communication Loop ---
         async with client.aio.live.connect(model=model_id, config=config) as session:
@@ -195,6 +202,7 @@ async def handle_websocket(websocket):
                             await session.send_realtime_input(
                                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
                             )
+                            logger.info(f"Client sent audio to Gemini: {audio_input}")
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("Client connection closed.")
                 except Exception as e:

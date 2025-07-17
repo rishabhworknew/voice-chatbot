@@ -18,7 +18,6 @@ async def call_places_api(text_query: str):
         return response.json()
     except requests.RequestException as e:
         logger.error(f"Error calling Places API: {e}")
-        # Return a structured error that can be sent back to Gemini
         return {"error": f"Failed to connect to Places API: {str(e)}"}
 
 search_places = {
